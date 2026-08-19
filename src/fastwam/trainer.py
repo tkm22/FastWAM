@@ -1,6 +1,4 @@
-import logging
 import json
-import inspect
 import os
 import re
 from math import ceil
@@ -16,7 +14,7 @@ from torch.optim.lr_scheduler import ConstantLR, CosineAnnealingLR, LinearLR, Se
 from torch.utils.data import DataLoader
 
 from .utils.fs import ensure_dir
-from .utils.logging_config import get_logger, setup_logging
+from .utils.logging_config import get_logger
 from .utils.pytorch_utils import set_global_seed
 from .utils.samplers import ResumableEpochSampler
 from .utils.video_io import save_mp4
@@ -55,7 +53,6 @@ class Wan22Trainer:
                 "Expected one of: ['no', 'fp16', 'bf16']."
             )
         self.wandb_enabled = bool(cfg.wandb.enabled)
-
         self.accelerator = Accelerator(
             gradient_accumulation_steps=self.gradient_accumulation_steps,
             mixed_precision=self.mixed_precision,
@@ -79,8 +76,9 @@ class Wan22Trainer:
         if self.val_dataset is not None:
             self._assert_dataset_length_consistent(self.val_dataset, "val_dataset")
 
-        # Freeze non-trainable modules before optimizer/deepspeed initialization.
-        # This keeps DiT (+ optional proprio encoder) as trainable when ZeRO builds optimizer state.
+        # Pixel FastWAM finetunes every MoT parameter (both video and action
+        # experts).  Training-only VAE/teacher/LPIPS helpers are unregistered
+        # and therefore cannot enter this optimizer.
         self._apply_dit_only_train_mode(self.model)
         trainable_params = list(self.model.dit.parameters())
         proprio_encoder = getattr(self.model, "proprio_encoder", None)
@@ -278,8 +276,7 @@ class Wan22Trainer:
         logger.warning("Loaded .pt weights only; optimizer/scheduler/step were not restored under ZeRO2.")
 
     def _set_dit_only_train_mode(self):
-        # Match DiffSynth's freeze_except("dit"): only DiT stays trainable/in-train-mode.
-        logger.info("Setting DiT to train mode and freezing other model components.")
+        logger.info("Setting full MoT train mode; training-only auxiliaries remain frozen.")
         model = self.accelerator.unwrap_model(self.model)
         self._apply_dit_only_train_mode(model)
 
@@ -293,6 +290,13 @@ class Wan22Trainer:
         if proprio_encoder is not None:
             proprio_encoder.train()
             proprio_encoder.requires_grad_(True)
+
+        # These are intentionally plain attributes rather than registered
+        # modules, but be explicit so callers cannot accidentally enable them.
+        for name in ("_asymflow_teacher", "_asymflow_vae", "_asymflow_lpips"):
+            auxiliary = getattr(model, name, None)
+            if auxiliary is not None:
+                auxiliary.eval().requires_grad_(False)
 
     @staticmethod
     def _to_batched_eval_sample(sample):
@@ -375,6 +379,13 @@ class Wan22Trainer:
 
     @torch.no_grad()
     def evaluate(self):
+        """Run one deterministic validation sample and log direct R-G metrics.
+
+        Pixel Asym-FastWAM has no runtime VAE decode/reconstruction state.
+        Therefore validation reports rollout-vs-ground-truth ``psnr_rg`` and
+        ``ssim_rg`` only, and saves an ``[R | G]`` comparison video rather
+        than the latent model's ``[R | D | G]`` video.
+        """
         if self.val_dataset is None:
             return None
 
@@ -493,25 +504,9 @@ class Wan22Trainer:
             action_l1 = action_diff.abs().mean().item()
             action_l2 = action_diff.pow(2).mean().item()
 
-        # 4. VAE reconstruction metrics against GT video
-        gt_video_batch = video0.unsqueeze(0).to(device=model.device, dtype=model.torch_dtype)
-        vae_latents = model._encode_video_latents(gt_video_batch, tiled=False)
-        vae_recon_video = model._decode_latents(vae_latents, tiled=False)
-        vae_video_tensor = pil_frames_to_video_tensor(vae_recon_video)
-
-        assert vae_video_tensor.shape == gt_video_tensor.shape, (
-            "Eval VAE reconstruction/GT shape mismatch: "
-            f"vae={tuple(vae_video_tensor.shape)} vs gt={tuple(gt_video_tensor.shape)}"
-        )
-
-        psnr_decode_vs_gt = video_psnr(pred=vae_video_tensor, target=gt_video_tensor)
-        ssim_decode_vs_gt = video_ssim(pred=vae_video_tensor, target=gt_video_tensor)
-
-        psnr_rollout_vs_decode = video_psnr(pred=pred_video_tensor, target=vae_video_tensor)
-        ssim_rollout_vs_decode = video_ssim(pred=pred_video_tensor, target=vae_video_tensor)
-
+        # Pixel generation has only rollout (R) and ground truth (G).
         stitched_video_tensor = torch.cat(
-            [pred_video_tensor, vae_video_tensor, gt_video_tensor],
+            [pred_video_tensor, gt_video_tensor],
             dim=2,
         ).contiguous()
         stitched_frames = []
@@ -525,25 +520,30 @@ class Wan22Trainer:
         )
         save_mp4(stitched_frames, video_path, fps=8)
 
+        metric_values = [
+            float(val_loss),
+            float(psnr_rollout_vs_gt),
+            float(ssim_rollout_vs_gt),
+            float(action_l2) if action_l2 is not None else -1.0,
+            float(action_l1) if action_l1 is not None else -1.0,
+        ]
         local_metrics = torch.tensor(
-            [
-                float(val_loss),
-                float(psnr_rollout_vs_gt),
-                float(ssim_rollout_vs_gt),
-                float(psnr_rollout_vs_decode),
-                float(ssim_rollout_vs_decode),
-                float(psnr_decode_vs_gt),
-                float(ssim_decode_vs_gt),
-                float(action_l2) if action_l2 is not None else -1.0,
-                float(action_l1) if action_l1 is not None else -1.0,
-            ],
+            metric_values,
             device=self.accelerator.device,
             dtype=torch.float32,
         ).unsqueeze(0)
         gathered_metrics = self.accelerator.gather_for_metrics(local_metrics)
-        mean_metrics = gathered_metrics[:, :7].mean(dim=0)
-        action_l2_mean = gathered_metrics[:, 7].mean().item() if action_l2 is not None else None
-        action_l1_mean = gathered_metrics[:, 8].mean().item() if action_l1 is not None else None
+        mean_metrics = gathered_metrics[:, :3].mean(dim=0)
+        action_l2_mean = (
+            gathered_metrics[:, 3].mean().item()
+            if action_l2 is not None
+            else None
+        )
+        action_l1_mean = (
+            gathered_metrics[:, 4].mean().item()
+            if action_l1 is not None
+            else None
+        )
 
         if was_dit_training:
             self._set_dit_only_train_mode()
@@ -552,10 +552,6 @@ class Wan22Trainer:
             "val_loss": float(mean_metrics[0].item()),
             "psnr_rg": float(mean_metrics[1].item()),
             "ssim_rg": float(mean_metrics[2].item()),
-            "psnr_rd": float(mean_metrics[3].item()),
-            "ssim_rd": float(mean_metrics[4].item()),
-            "psnr_dg": float(mean_metrics[5].item()),
-            "ssim_dg": float(mean_metrics[6].item()),
             "video_path": video_path,
         }
         if action_l2_mean is not None:
@@ -736,8 +732,8 @@ class Wan22Trainer:
                             description = "[eval] step=%d val_loss=%.4f infer_psnr=%.4f infer_ssim=%.4f" % (
                                 self.global_step,
                                 metrics["val_loss"],
-                                metrics["psnr_rd"],
-                                metrics["ssim_rd"],
+                                metrics["psnr_rg"],
+                                metrics["ssim_rg"],
                             )
                             if "action_l2" in metrics:
                                 description += " action_l2=%.4f" % metrics["action_l2"]
@@ -748,10 +744,6 @@ class Wan22Trainer:
                                 "eval/val_loss": float(metrics["val_loss"]),
                                 "eval/psnr_rg": float(metrics["psnr_rg"]),
                                 "eval/ssim_rg": float(metrics["ssim_rg"]),
-                                "eval/psnr_rd": float(metrics["psnr_rd"]),
-                                "eval/ssim_rd": float(metrics["ssim_rd"]),
-                                "eval/psnr_dg": float(metrics["psnr_dg"]),
-                                "eval/ssim_dg": float(metrics["ssim_dg"]),
                             }
                             if "action_l2" in metrics:
                                 eval_payload["eval/action_l2"] = float(metrics["action_l2"])

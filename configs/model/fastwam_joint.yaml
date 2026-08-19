@@ -8,6 +8,9 @@ redirect_common_files: true
 mot_checkpoint_mixed_attn: true
 action_dit_pretrained_path: checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 skip_dit_load_from_pretrain: false
+# Produced by the task-balanced 100k stride-4 fit. Pixel inference remains
+# VAE-free; the VAE below is instantiated only for the training VR target.
+projection_artifact_path: artifacts/2026-08-04_stride4_bal100k.pt
 
 video_dit_config:
   has_image_input: false
@@ -27,6 +30,7 @@ video_dit_config:
   require_vae_embedding: false
   fuse_vae_embedding_in_latents: true
   use_gradient_checkpointing: ${model.mot_checkpoint_mixed_attn}
+  inference_sigma_min: 1.0e-4
   video_attention_mask_mode: "first_frame_causal" # default
   action_conditioned: false
   action_dim: ${data.train.processor.action_output_dim}
@@ -56,3 +60,17 @@ action_scheduler:
 
 loss:
   lambda_action: 1.0
+
+asymflow:
+  enabled: true
+  vr_enabled: true
+  vae_path: checkpoints/DiffSynth-Studio/Wan-Series-Converted-Safetensors/Wan2.2_VAE.safetensors
+  mse_loss_weight: 10.0
+  loss_shift: 0.3
+  sigma_min: 5.0e-2
+  # Use scheduler_uniform only for the matched legacy FastWAM timestep ablation.
+  timestep_sampling: logit_normal
+  timestep_shift: 17.0
+  lpips_enabled: true
+  lpips_loss_weight: 1.0
+  clamp_denoised: true

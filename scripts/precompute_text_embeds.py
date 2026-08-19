@@ -224,7 +224,7 @@ def main(cfg: DictConfig):
         overwrite,
     )
 
-    _, text_config, _, tokenizer_config = _resolve_configs(
+    _, text_config, tokenizer_config = _resolve_configs(
         model_id=model_id,
         tokenizer_model_id=tokenizer_model_id,
         redirect_common_files=redirect_common_files,

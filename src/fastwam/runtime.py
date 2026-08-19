@@ -1,6 +1,5 @@
 import logging
 import os
-import inspect
 from pathlib import Path
 
 import torch
@@ -86,10 +85,13 @@ def create_fastwam(
     video_scheduler=None,
     action_scheduler=None,
     loss=None,
+    asymflow=None,
     mot_checkpoint_mixed_attn: bool = True,
     redirect_common_files: bool = True,
+    projection_artifact_path=None,
     model_dtype: torch.dtype = torch.bfloat16,
     device: str = "cuda",
+    load_training_auxiliaries: bool = False,
 ):
     from .models.wan22.fastwam import FastWAM
 
@@ -132,6 +134,12 @@ def create_fastwam(
         loss = {}
     if not isinstance(loss, dict):
         raise ValueError(f"`loss` must be dict-like, got {type(loss)}")
+    if isinstance(asymflow, DictConfig):
+        asymflow = OmegaConf.to_container(asymflow, resolve=True)
+    if asymflow is None:
+        asymflow = {}
+    if not isinstance(asymflow, dict):
+        raise ValueError(f"`asymflow` must be dict-like, got {type(asymflow)}")
 
     return FastWAM.from_wan22_pretrained(
         device=device,
@@ -155,6 +163,9 @@ def create_fastwam(
         action_num_train_timesteps=int(action_scheduler["num_train_timesteps"]),
         loss_lambda_video=float(loss.get("lambda_video", 1.0)),
         loss_lambda_action=float(loss.get("lambda_action", 1.0)),
+        projection_artifact_path=projection_artifact_path,
+        asymflow=asymflow,
+        load_training_auxiliaries=bool(load_training_auxiliaries),
     )
 
 
@@ -171,10 +182,13 @@ def create_fastwam_joint(
     video_scheduler=None,
     action_scheduler=None,
     loss=None,
+    asymflow=None,
     mot_checkpoint_mixed_attn: bool = True,
     redirect_common_files: bool = True,
+    projection_artifact_path=None,
     model_dtype: torch.dtype = torch.bfloat16,
     device: str = "cuda",
+    load_training_auxiliaries: bool = False,
 ):
     from .models.wan22.fastwam_joint import FastWAMJoint
 
@@ -217,6 +231,12 @@ def create_fastwam_joint(
         loss = {}
     if not isinstance(loss, dict):
         raise ValueError(f"`loss` must be dict-like, got {type(loss)}")
+    if isinstance(asymflow, DictConfig):
+        asymflow = OmegaConf.to_container(asymflow, resolve=True)
+    if asymflow is None:
+        asymflow = {}
+    if not isinstance(asymflow, dict):
+        raise ValueError(f"`asymflow` must be dict-like, got {type(asymflow)}")
 
     return FastWAMJoint.from_wan22_pretrained(
         device=device,
@@ -240,6 +260,9 @@ def create_fastwam_joint(
         action_num_train_timesteps=int(action_scheduler["num_train_timesteps"]),
         loss_lambda_video=float(loss.get("lambda_video", 1.0)),
         loss_lambda_action=float(loss.get("lambda_action", 1.0)),
+        projection_artifact_path=projection_artifact_path,
+        asymflow=asymflow,
+        load_training_auxiliaries=bool(load_training_auxiliaries),
     )
 
 
@@ -256,10 +279,13 @@ def create_fastwam_idm(
     video_scheduler=None,
     action_scheduler=None,
     loss=None,
+    asymflow=None,
     mot_checkpoint_mixed_attn: bool = True,
     redirect_common_files: bool = True,
+    projection_artifact_path=None,
     model_dtype: torch.dtype = torch.bfloat16,
     device: str = "cuda",
+    load_training_auxiliaries: bool = False,
 ):
     from .models.wan22.fastwam_idm import (
         FastWAMIDM,
@@ -304,6 +330,12 @@ def create_fastwam_idm(
         loss = {}
     if not isinstance(loss, dict):
         raise ValueError(f"`loss` must be dict-like, got {type(loss)}")
+    if isinstance(asymflow, DictConfig):
+        asymflow = OmegaConf.to_container(asymflow, resolve=True)
+    if asymflow is None:
+        asymflow = {}
+    if not isinstance(asymflow, dict):
+        raise ValueError(f"`asymflow` must be dict-like, got {type(asymflow)}")
 
     return FastWAMIDM.from_wan22_pretrained(
         device=device,
@@ -327,6 +359,9 @@ def create_fastwam_idm(
         action_num_train_timesteps=int(action_scheduler["num_train_timesteps"]),
         loss_lambda_video=float(loss.get("lambda_video", 1.0)),
         loss_lambda_action=float(loss.get("lambda_action", 1.0)),
+        projection_artifact_path=projection_artifact_path,
+        asymflow=asymflow,
+        load_training_auxiliaries=bool(load_training_auxiliaries),
     )
 
 
@@ -369,7 +404,12 @@ def run_training(cfg: DictConfig):
     model_device = _resolve_train_device()
     mixed_precision = _normalize_mixed_precision(cfg.mixed_precision)
     model_dtype = _mixed_precision_to_model_dtype(mixed_precision)
-    model = instantiate(cfg.model, model_dtype=model_dtype, device=model_device)
+    model = instantiate(
+        cfg.model,
+        model_dtype=model_dtype,
+        device=model_device,
+        load_training_auxiliaries=True,
+    )
     train_ds, val_ds = build_datasets(cfg.data)
 
     trainer = Wan22Trainer(

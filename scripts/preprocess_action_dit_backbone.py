@@ -7,7 +7,10 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 
 from fastwam.models.wan22.action_dit import ActionDiT
-from fastwam.models.wan22.helpers.loader import load_wan22_ti2v_5b_components
+from fastwam.models.wan22.helpers.loader import (
+    _resolve_configs,
+    load_wan_video_dit_state_dict,
+)
 
 
 def _parse_dtype(name: str) -> torch.dtype:
@@ -168,26 +171,26 @@ def main() -> None:
     print(f"[INFO] Loaded model config from {model_config_path}. "
           f"Preprocessing ActionDiT backbone with dtype={torch_dtype} on device={args.device}, "
           f"apply_alpha_scaling={apply_alpha_scaling}.")
-    components = load_wan22_ti2v_5b_components(
-        device=args.device,
-        torch_dtype=torch_dtype,
+    dit_model_config, _, _ = _resolve_configs(
         model_id=cfg.get("model_id", "Wan-AI/Wan2.2-TI2V-5B"),
         tokenizer_model_id=cfg.get("tokenizer_model_id", "Wan-AI/Wan2.1-T2V-1.3B"),
         redirect_common_files=redirect_common_files,
-        dit_config=video_cfg,
     )
-    video_expert = components.dit
+    dit_model_config.download_if_necessary()
+    video_state = load_wan_video_dit_state_dict(
+        dit_model_config.path,
+        torch_dtype=torch_dtype,
+    )
 
     action_expert = ActionDiT(**action_cfg).to(device=args.device, dtype=torch_dtype)
-    if int(action_cfg["num_heads"]) != int(video_expert.num_heads):
+    if int(action_cfg["num_heads"]) != int(video_cfg["num_heads"]):
         raise ValueError("ActionDiT `num_heads` must match video expert for MoT mixed attention.")
-    if int(action_cfg["attn_head_dim"]) != int(video_expert.attn_head_dim):
+    if int(action_cfg["attn_head_dim"]) != int(video_cfg["attn_head_dim"]):
         raise ValueError("ActionDiT `attn_head_dim` must match video expert for MoT mixed attention.")
-    if int(action_cfg["num_layers"]) != int(len(video_expert.blocks)):
+    if int(action_cfg["num_layers"]) != int(video_cfg["num_layers"]):
         raise ValueError("ActionDiT `num_layers` must match video expert.")
 
     action_state = action_expert.state_dict()
-    video_state = video_expert.state_dict()
     backbone_keys = ActionDiT.backbone_key_set(action_state.keys())
 
     backbone_state_dict: dict[str, torch.Tensor] = {}
