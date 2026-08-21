@@ -308,13 +308,13 @@ def test_single_batch_backward_and_future_output_shape():
     model = build_small_joint_model()
     sample = {
         "video": torch.randn(2, 3, 9, 32, 32).clamp(-1, 1),
-        "action": torch.randn(2, 8, 7),
+        "action": torch.randn(2, 32, 7),
         "context": torch.randn(2, 4, 24),
         "context_mask": torch.ones(2, 4, dtype=torch.bool),
         "image_is_pad": torch.tensor(
             [[False] * 9, [False, False, False, False, False, True, True, True, True]]
         ),
-        "action_is_pad": torch.zeros(2, 8, dtype=torch.bool),
+        "action_is_pad": torch.zeros(2, 32, dtype=torch.bool),
     }
     loss, metrics = model.training_loss(sample)
     loss.backward()
@@ -349,7 +349,7 @@ def test_action_and_joint_euler_inference_paths_match():
     common = {
         "prompt": None,
         "input_image": torch.randn(3, 32, 32).clamp(-1, 1),
-        "action_horizon": 8,
+        "action_horizon": 32,
         "num_video_frames": 9,
         "context": torch.randn(1, 4, 24),
         "context_mask": torch.ones(1, 4, dtype=torch.bool),
@@ -358,12 +358,12 @@ def test_action_and_joint_euler_inference_paths_match():
         "rand_device": "cpu",
     }
     action_only = model.infer_action(**common)
-    assert action_only["action"].shape == (8, 7)
+    assert action_only["action"].shape == (32, 7)
     assert torch.isfinite(action_only["action"]).all()
 
     joint = model.infer_joint(**common)
     assert len(joint["video"]) == 9
-    assert joint["action"].shape == (8, 7)
+    assert joint["action"].shape == (32, 7)
     assert torch.isfinite(joint["action"]).all()
     torch.testing.assert_close(action_only["action"], joint["action"], rtol=0, atol=0)
 
@@ -372,7 +372,7 @@ def test_joint_attention_preserves_fastwam_joint_directionality():
     model = build_small_joint_model()
     spatial_tokens = (32 // 16) * (32 // 16)
     video_tokens = 3 * spatial_tokens
-    action_tokens = 8
+    action_tokens = 32
     mask = model._build_mot_attention_mask(
         video_tokens, action_tokens, spatial_tokens, torch.device("cpu")
     )
