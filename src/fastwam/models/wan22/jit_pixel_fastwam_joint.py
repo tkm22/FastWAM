@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional, Sequence, Union
 
 import torch
@@ -617,6 +618,29 @@ class FastWAMJointJiTPixel(FastWAMJoint):
             "t_eps": self.t_eps,
         }
 
+    def _validate_checkpoint_metadata(self, payload: dict[str, Any], path: Path) -> None:
+        actual = payload.get("jit_pixel")
+        expected = self._checkpoint_metadata()
+        if not isinstance(actual, dict):
+            raise ValueError(f"Checkpoint is missing JiT pixel metadata: {path}")
+        mismatches = {
+            key: (expected[key], actual.get(key))
+            for key in expected
+            if actual.get(key) != expected[key]
+        }
+        if mismatches:
+            raise ValueError(f"JiT pixel checkpoint metadata mismatch: {mismatches}")
+
+    def validate_training_state(self, state_dir: str) -> None:
+        state_path = Path(state_dir)
+        weights_path = state_path.parent.parent / "weights" / f"{state_path.name}.pt"
+        if not weights_path.is_file():
+            raise FileNotFoundError(
+                f"Full-state resume requires its matching raw checkpoint: {weights_path}"
+            )
+        payload = torch.load(weights_path, map_location="cpu", mmap=True)
+        self._validate_checkpoint_metadata(payload, weights_path)
+
     def save_checkpoint(self, path, optimizer=None, step=None):
         payload = {
             "mot": self.mot.state_dict(),
@@ -631,18 +655,9 @@ class FastWAMJointJiTPixel(FastWAMJoint):
         torch.save(payload, path)
 
     def load_checkpoint(self, path, optimizer=None):
+        path = Path(path)
         payload = torch.load(path, map_location="cpu")
-        actual = payload.get("jit_pixel")
-        expected = self._checkpoint_metadata()
-        if not isinstance(actual, dict):
-            raise ValueError(f"Checkpoint is missing JiT pixel metadata: {path}")
-        mismatches = {
-            key: (expected[key], actual.get(key))
-            for key in expected
-            if actual.get(key) != expected[key]
-        }
-        if mismatches:
-            raise ValueError(f"JiT pixel checkpoint metadata mismatch: {mismatches}")
+        self._validate_checkpoint_metadata(payload, path)
         if "mot" not in payload:
             raise ValueError(f"JiT pixel checkpoint is missing `mot`: {path}")
         self.mot.load_state_dict(payload["mot"], strict=True)

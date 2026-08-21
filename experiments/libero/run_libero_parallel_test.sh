@@ -19,6 +19,8 @@ run_libero_eval() {
     # Basic configuration
     ROOT_DIR=${ROOT_DIR:-"$(pwd)"}
     export ROOT_DIR
+    PYTHON_BIN=${PYTHON_BIN:-"$(command -v python)"}
+    export PYTHON_BIN
     # Generate a unique run_id
     RUN_ID=${RUN_ID:-"eval_$(date +%Y%m%d_%H%M%S)"}
     export RUN_ID
@@ -337,9 +339,8 @@ run_libero_eval() {
         tmux send-keys -t $SESSION_NAME:$pane_info "clear" C-m 2>/dev/null
         tmux send-keys -t $SESSION_NAME:$pane_info "source ~/.bashrc && cd $ROOT_DIR && \
             export EXP_NAME=$EXP_NAME PYTHONPATH='$ROOT_DIR/src' PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 && \
-            export PATH='/home/admin/miniconda3/envs/fastwam/bin':\$PATH && \
             STATUS_FILE='$status_file' LOG_FILE='$log_file' RESULT_FILE='$result_file' && \
-            CUDA_VISIBLE_DEVICES=$gpu_id python experiments/libero/eval_libero_single.py \
+            CUDA_VISIBLE_DEVICES=$gpu_id '$PYTHON_BIN' experiments/libero/eval_libero_single.py \
             task=$CONFIG ckpt=$CKPT \
             EVALUATION.task_suite_name=$suite EVALUATION.task_id=$task_id gpu_id=$gpu_id \
             EVALUATION.num_trials=$NUM_TRIALS EVALUATION.output_dir=$OUTPUT_DIR $EXTRA_ARGS > \"\$LOG_FILE\" 2>&1; \

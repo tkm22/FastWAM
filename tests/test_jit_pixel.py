@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -257,6 +260,24 @@ def test_checkpoint_metadata_is_strict():
             model.load_checkpoint(checkpoint)
 
 
+def test_full_state_resume_validates_matching_raw_checkpoint():
+    model = build_small_joint_model()
+    with tempfile.TemporaryDirectory() as tmp:
+        checkpoint_root = Path(tmp) / "checkpoints"
+        state_dir = checkpoint_root / "state" / "step_000003"
+        weights_path = checkpoint_root / "weights" / "step_000003.pt"
+        state_dir.mkdir(parents=True)
+        weights_path.parent.mkdir(parents=True)
+        model.save_checkpoint(weights_path, step=3)
+        model.validate_training_state(str(state_dir))
+
+        payload = torch.load(weights_path, map_location="cpu")
+        payload["jit_pixel"]["future_tube_size"] = 2
+        torch.save(payload, weights_path)
+        with pytest.raises(ValueError, match="metadata mismatch"):
+            model.validate_training_state(str(state_dir))
+
+
 def test_pixel_model_source_has_no_asym_or_vae_runtime_imports():
     source_paths = [
         Path("src/fastwam/models/wan22/jit_pixel_fastwam_joint.py"),
@@ -266,3 +287,16 @@ def test_pixel_model_source_has_no_asym_or_vae_runtime_imports():
     joined = "\n".join(path.read_text(encoding="utf-8").lower() for path in source_paths)
     for term in forbidden:
         assert term.lower() not in joined
+
+
+def test_importing_pixel_model_does_not_import_vae_or_asym_modules():
+    code = """
+import sys
+import fastwam.models.wan22.jit_pixel_fastwam_joint
+forbidden = ('wan_video_vae', 'asymflow', 'oklab', 'lpips')
+loaded = [name for name in sys.modules if any(term in name.lower() for term in forbidden)]
+assert loaded == [], loaded
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path("src").resolve())
+    subprocess.run([sys.executable, "-c", code], env=env, check=True)

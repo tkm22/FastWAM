@@ -615,6 +615,10 @@ class Wan22Trainer:
         return {"weights_path": ckpt_path, "state_path": state_path}
 
     def load_training_state(self, state_dir: str):
+        model = self.accelerator.unwrap_model(self.model)
+        validate_training_state = getattr(model, "validate_training_state", None)
+        if validate_training_state is not None:
+            validate_training_state(state_dir)
         self.accelerator.load_state(input_dir=state_dir)
         state_file = Path(state_dir) / "trainer_state.json"
         if state_file.exists():

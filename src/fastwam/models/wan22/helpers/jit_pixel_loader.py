@@ -10,17 +10,15 @@ import torch
 from fastwam.utils.logging_config import get_logger
 
 from ..jit_pixel_video_dit import JiTPixelWanVideoDiT
+from ..wan_video_dit import WanVideoDiT
 from ..wan_video_text_encoder import HuggingfaceTokenizer, WanTextEncoder
 from .io import ModelConfig, hash_model_file, load_state_dict
-from .loader import (
-    SKIPPED_PRETRAIN_SENTINEL,
-    _load_registered_model,
-    _validate_dit_config,
-)
 
 logger = get_logger(__name__)
 
 WAN22_TI2V_5B_DIT_HASH = "1f5ab7703c6fc803fdded85ff040c316"
+WAN_TEXT_ENCODER_HASH = "9c8818c2cbea55eca56c7b447df170da"
+SKIPPED_PRETRAIN_SENTINEL = "SKIPPED_PRETRAIN"
 
 
 @dataclass
@@ -54,9 +52,36 @@ def _validate_jit_pixel_dit_config(dit_config: dict[str, Any]) -> dict[str, Any]
 
 def _source_wan_dit_config(dit_config: Mapping[str, Any]) -> dict[str, Any]:
     pixel_only = {"pixel_patch_size", "future_tube_size", "bottleneck_dim"}
-    return _validate_dit_config(
-        {key: value for key, value in dit_config.items() if key not in pixel_only}
+    source_config = {key: value for key, value in dit_config.items() if key not in pixel_only}
+    signature = inspect.signature(WanVideoDiT.__init__)
+    allowed = {name for name in signature.parameters if name != "self"}
+    required = {
+        name
+        for name, param in signature.parameters.items()
+        if name != "self" and param.default is inspect.Signature.empty
+    }
+    unknown = sorted(set(source_config) - allowed)
+    missing = sorted(required - set(source_config))
+    if unknown or missing:
+        raise ValueError(f"Invalid source Wan DiT config: unknown={unknown}, missing={missing}")
+    return source_config
+
+
+def _load_wan_text_encoder(
+    path: str | list[str],
+    *,
+    torch_dtype: torch.dtype,
+    device: str,
+) -> WanTextEncoder:
+    model_hash = hash_model_file(path)
+    if model_hash != WAN_TEXT_ENCODER_HASH:
+        raise ValueError(f"Cannot detect Wan text encoder: {path}; hash={model_hash}")
+    model = WanTextEncoder()
+    model.load_state_dict(
+        load_state_dict(path, torch_dtype=torch_dtype, device="cpu"),
+        strict=True,
     )
+    return model.to(device=device, dtype=torch_dtype)
 
 
 def build_jit_pixel_state_dict(
@@ -173,8 +198,6 @@ def load_jit_pixel_wan22_components(
             torch_dtype=torch_dtype,
             device="cpu",
         )
-        # Validate source config independently before adapting raw tensors.
-        _validate_dit_config(source_config)
         target.load_state_dict(build_jit_pixel_state_dict(source_sd, target), strict=True)
         dit_path = str(dit_model_config.path)
     target = target.to(device=device, dtype=torch_dtype)
@@ -186,9 +209,8 @@ def load_jit_pixel_wan22_components(
     if load_text_encoder:
         text_config.download_if_necessary()
         tokenizer_config.download_if_necessary()
-        text_encoder = _load_registered_model(
+        text_encoder = _load_wan_text_encoder(
             text_config.path,
-            "wan_video_text_encoder",
             torch_dtype=torch_dtype,
             device=device,
         )
