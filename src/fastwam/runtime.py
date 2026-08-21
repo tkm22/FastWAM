@@ -13,6 +13,7 @@ from omegaconf import OmegaConf
 
 from .trainer import Wan22Trainer
 from .utils.logging_config import get_logger, setup_logging
+from .utils.pytorch_utils import set_global_seed
 from .utils.video_io import save_mp4
 from .utils import misc
 
@@ -438,6 +439,7 @@ def run_training(cfg: DictConfig):
         log_level=logging.INFO,
         is_main_process=torch.distributed.get_rank() == 0 if torch.distributed.is_initialized() else True,
     )
+    set_global_seed(int(cfg.seed), get_worker_init_fn=False)
     misc.register_work_dir(cfg.output_dir)
     config_payload = OmegaConf.to_container(cfg, resolve=True)
     with open(Path(cfg.output_dir) / "config.yaml", "w") as f:

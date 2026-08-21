@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
+from fastwam import runtime
 from fastwam.models.wan22.action_dit import ActionDiT
 from fastwam.models.wan22.helpers.jit_pixel_loader import build_jit_pixel_state_dict
 from fastwam.models.wan22.jit_pixel_fastwam_joint import FastWAMJointJiTPixel
@@ -186,6 +188,45 @@ def test_jit_sigma_sampling_matches_official_data_time(monkeypatch):
     sigma = sample_jit_sigma(3, device="cpu", p_mean=-0.8, p_std=0.8)
     official_data_t = torch.sigmoid(standard_normal * 0.8 - 0.8)
     torch.testing.assert_close(sigma, 1.0 - official_data_t)
+
+
+def test_training_seeds_before_model_initialization(monkeypatch, tmp_path):
+    events = []
+
+    def fake_seed(seed, *, get_worker_init_fn):
+        events.append(("seed", seed, get_worker_init_fn))
+
+    def fake_instantiate(config, **kwargs):
+        kind = "model" if "model_dtype" in kwargs else "dataset"
+        events.append(("instantiate", kind))
+        return object()
+
+    class FakeTrainer:
+        def __init__(self, *args, **kwargs):
+            events.append(("trainer",))
+
+        def train(self):
+            events.append(("train",))
+
+    cfg = OmegaConf.create(
+        {
+            "output_dir": str(tmp_path),
+            "seed": 42,
+            "mixed_precision": "no",
+            "model": {"name": "model"},
+            "data": {"train": {"name": "dataset"}, "val": None},
+        }
+    )
+    monkeypatch.setattr(runtime, "set_global_seed", fake_seed)
+    monkeypatch.setattr(runtime, "instantiate", fake_instantiate)
+    monkeypatch.setattr(runtime, "Wan22Trainer", FakeTrainer)
+    monkeypatch.setattr(runtime, "setup_logging", lambda **kwargs: None)
+    monkeypatch.setattr(runtime.misc, "register_work_dir", lambda path: None)
+    monkeypatch.setattr(runtime, "_resolve_train_device", lambda: "cpu")
+
+    runtime.run_training(cfg)
+
+    assert events[:2] == [("seed", 42, False), ("instantiate", "model")]
 
 
 def build_small_joint_model() -> FastWAMJointJiTPixel:
