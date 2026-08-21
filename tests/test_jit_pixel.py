@@ -15,6 +15,7 @@ from fastwam.models.wan22.jit_pixel_fastwam_joint import FastWAMJointJiTPixel
 from fastwam.models.wan22.jit_pixel_objective import (
     add_jit_noise,
     jit_velocity_from_x0,
+    sample_jit_sigma,
 )
 from fastwam.models.wan22.jit_pixel_packing import (
     patchify_first_frame,
@@ -95,6 +96,7 @@ def test_p16_matches_wan_1176_token_grid():
     assert state["tokens"].shape == (1, 1176, 48)
     assert state["meta"]["grid_size"] == (3, 14, 28)
     assert state["meta"]["tokens_per_frame"] == 392
+    assert model.post_dit(state["tokens"], state).shape == (1, 3, 8, 224, 448)
 
 
 def test_dynamic_shapes_and_invalid_sizes():
@@ -175,6 +177,15 @@ def test_jit_velocity_loss_matches_official_sign_convention_and_clamp():
     torch.testing.assert_close(
         ours_target[0], (noisy[0] - clean[0]) / 0.05
     )
+
+
+def test_jit_sigma_sampling_matches_official_data_time(monkeypatch):
+    standard_normal = torch.tensor([-1.0, 0.0, 1.0])
+    monkeypatch.setattr(torch, "randn", lambda *args, **kwargs: standard_normal.clone())
+
+    sigma = sample_jit_sigma(3, device="cpu", p_mean=-0.8, p_std=0.8)
+    official_data_t = torch.sigmoid(standard_normal * 0.8 - 0.8)
+    torch.testing.assert_close(sigma, 1.0 - official_data_t)
 
 
 def build_small_joint_model() -> FastWAMJointJiTPixel:
