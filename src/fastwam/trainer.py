@@ -41,6 +41,7 @@ class Wan22Trainer:
         self.max_steps = int(max_steps) if max_steps is not None else None
         self.log_every = int(cfg.log_every)
         self.save_every = int(cfg.save_every)
+        self.save_training_state = bool(cfg.get("save_training_state", True))
         self.eval_every = int(cfg.eval_every)
         self.eval_num_inference_steps = int(cfg.eval_num_inference_steps)
         self.gradient_accumulation_steps = int(cfg.gradient_accumulation_steps)
@@ -48,6 +49,7 @@ class Wan22Trainer:
         self.seed = int(cfg.seed)
         
         self.resume = cfg.resume
+        self.reset_lr_on_resume = bool(cfg.get("reset_lr_on_resume", False))
         self.mixed_precision = str(cfg.mixed_precision).strip().lower()
         if self.mixed_precision not in {"no", "fp16", "bf16"}:
             raise ValueError(
@@ -270,6 +272,18 @@ class Wan22Trainer:
         if resume_path.is_dir():
             logger.info("Resuming full training state from directory: %s", resume)
             self.load_training_state(str(resume_path))
+            if self.reset_lr_on_resume:
+                for param_group in self.optimizer.param_groups:
+                    param_group["lr"] = self.learning_rate
+                    param_group["initial_lr"] = self.learning_rate
+                if hasattr(self.scheduler, "_last_lr"):
+                    self.scheduler._last_lr = [
+                        self.learning_rate for _ in self.optimizer.param_groups
+                    ]
+                logger.info(
+                    "Reset resumed optimizer learning rate to %.3e; optimizer moments remain restored.",
+                    self.learning_rate,
+                )
             return
         if not resume_path.exists():
             raise FileNotFoundError(f"Resume checkpoint not found: {resume}")
@@ -589,12 +603,14 @@ class Wan22Trainer:
             ckpt_path = self._save_weights_checkpoint(step_tag=step_tag)
         self.accelerator.wait_for_everyone()
 
-        state_path = os.path.join(self.state_dir, step_tag)
-        ensure_dir(state_path)
-        self.accelerator.save_state(output_dir=state_path)
-        if self.accelerator.is_main_process:
-            self._save_trainer_state(state_path)
-        self.accelerator.wait_for_everyone()
+        state_path = None
+        if self.save_training_state:
+            state_path = os.path.join(self.state_dir, step_tag)
+            ensure_dir(state_path)
+            self.accelerator.save_state(output_dir=state_path)
+            if self.accelerator.is_main_process:
+                self._save_trainer_state(state_path)
+            self.accelerator.wait_for_everyone()
 
         return {"weights_path": ckpt_path, "state_path": state_path}
 

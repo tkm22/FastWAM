@@ -335,7 +335,9 @@ run_libero_eval() {
         # When the task exits, write a status file so the scheduler can detect failures promptly.
         tmux select-pane -t $SESSION_NAME:$pane_info 2>/dev/null
         tmux send-keys -t $SESSION_NAME:$pane_info "clear" C-m 2>/dev/null
-        tmux send-keys -t $SESSION_NAME:$pane_info "source ~/.bashrc && cd $ROOT_DIR && export EXP_NAME=$EXP_NAME && \
+        tmux send-keys -t $SESSION_NAME:$pane_info "source ~/.bashrc && cd $ROOT_DIR && \
+            export EXP_NAME=$EXP_NAME PYTHONPATH='$ROOT_DIR/src' PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 && \
+            export PATH='/home/admin/miniconda3/envs/fastwam/bin':\$PATH && \
             STATUS_FILE='$status_file' LOG_FILE='$log_file' RESULT_FILE='$result_file' && \
             CUDA_VISIBLE_DEVICES=$gpu_id python experiments/libero/eval_libero_single.py \
             task=$CONFIG ckpt=$CKPT \

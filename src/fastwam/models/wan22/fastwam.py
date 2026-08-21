@@ -185,7 +185,8 @@ class FastWAM(torch.nn.Module):
         self.mot.to(*args, **kwargs)
         if self.text_encoder is not None:
             self.text_encoder.to(*args, **kwargs)
-        self.vae.to(*args, **kwargs)
+        if self.vae is not None:
+            self.vae.to(*args, **kwargs)
         return self
 
     @staticmethod
