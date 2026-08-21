@@ -11,6 +11,7 @@ import torch
 from omegaconf import OmegaConf
 
 from fastwam import runtime
+from fastwam.trainer import Wan22Trainer
 from fastwam.models.wan22.action_dit import ActionDiT
 from fastwam.models.wan22.helpers.jit_pixel_loader import build_jit_pixel_state_dict
 from fastwam.models.wan22.jit_pixel_fastwam_joint import FastWAMJointJiTPixel
@@ -227,6 +228,36 @@ def test_training_seeds_before_model_initialization(monkeypatch, tmp_path):
     runtime.run_training(cfg)
 
     assert events[:2] == [("seed", 42, False), ("instantiate", "model")]
+
+
+def test_resume_lr_reset_preserves_configured_constant_scheduler():
+    parameter = torch.nn.Parameter(torch.ones(()))
+    trainer = Wan22Trainer.__new__(Wan22Trainer)
+    trainer.learning_rate = 1.0e-6
+    trainer.optimizer = torch.optim.AdamW([parameter], lr=trainer.learning_rate)
+    trainer.scheduler = torch.optim.lr_scheduler.ConstantLR(
+        trainer.optimizer, factor=1.0, total_iters=100
+    )
+    trainer._configured_resume_scheduler_state = trainer.scheduler.state_dict()
+
+    old_parameter = torch.nn.Parameter(torch.ones(()))
+    old_optimizer = torch.optim.AdamW([old_parameter], lr=1.0e-4)
+    old_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        old_optimizer, T_max=10
+    )
+    for _ in range(5):
+        old_optimizer.step()
+        old_scheduler.step()
+    trainer.optimizer.param_groups[0]["lr"] = old_optimizer.param_groups[0]["lr"]
+    trainer.optimizer.param_groups[0]["initial_lr"] = 1.0e-4
+    trainer.scheduler.load_state_dict(old_scheduler.state_dict())
+
+    trainer._use_configured_scheduler_after_resume()
+
+    for _ in range(3):
+        trainer.optimizer.step()
+        trainer.scheduler.step()
+        assert trainer.optimizer.param_groups[0]["lr"] == pytest.approx(1.0e-6)
 
 
 def build_small_joint_model() -> FastWAMJointJiTPixel:
