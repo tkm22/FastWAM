@@ -368,6 +368,21 @@ def test_action_and_joint_euler_inference_paths_match():
     torch.testing.assert_close(action_only["action"], joint["action"], rtol=0, atol=0)
 
 
+def test_joint_attention_preserves_fastwam_joint_directionality():
+    model = build_small_joint_model()
+    spatial_tokens = (32 // 16) * (32 // 16)
+    video_tokens = 3 * spatial_tokens
+    action_tokens = 8
+    mask = model._build_mot_attention_mask(
+        video_tokens, action_tokens, spatial_tokens, torch.device("cpu")
+    )
+
+    assert not mask[:spatial_tokens, spatial_tokens:video_tokens].any()
+    assert mask[video_tokens:, :video_tokens].all()
+    assert mask[video_tokens:, video_tokens:].all()
+    assert not mask[:video_tokens, video_tokens:].any()
+
+
 def test_checkpoint_metadata_is_strict():
     model = build_small_joint_model()
     with tempfile.TemporaryDirectory() as tmp:
