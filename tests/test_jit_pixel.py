@@ -343,7 +343,7 @@ def test_single_batch_backward_and_future_output_shape():
     assert output.shape == (2, 3, 8, 32, 32)
 
 
-def test_action_cache_and_joint_euler_inference_paths():
+def test_action_and_joint_euler_inference_paths_match():
     model = build_small_joint_model().eval()
     common = {
         "prompt": None,
@@ -364,6 +364,7 @@ def test_action_cache_and_joint_euler_inference_paths():
     assert len(joint["video"]) == 9
     assert joint["action"].shape == (8, 7)
     assert torch.isfinite(joint["action"]).all()
+    torch.testing.assert_close(action_only["action"], joint["action"], rtol=0, atol=0)
 
 
 def test_checkpoint_metadata_is_strict():

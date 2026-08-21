@@ -449,72 +449,25 @@ class FastWAMJointJiTPixel(FastWAMJoint):
         rand_device: str = "cpu",
         tiled: bool = False,
     ) -> dict[str, Any]:
-        del negative_prompt, text_cfg_scale
-        if tiled:
-            raise ValueError("JiT pixel mode has no VAE tiling path")
-        if num_video_frames <= 1 or (num_video_frames - 1) % self.future_tube_size:
-            raise ValueError(
-                f"`num_video_frames-1` must be divisible by tube={self.future_tube_size}"
-            )
-        self.eval()
-        first_frame = self._prepare_input_image(input_image)
-        context, context_mask = self._prepare_inference_context(
+        result = self.infer_joint(
             prompt=prompt,
-            context=context,
-            context_mask=context_mask,
+            input_image=input_image,
+            num_video_frames=num_video_frames,
+            action_horizon=action_horizon,
+            action=None,
             proprio=proprio,
-        )
-        generator = None if seed is None else torch.Generator(device=rand_device).manual_seed(seed)
-        action_x = torch.randn(
-            (1, action_horizon, self.action_expert.action_dim),
-            generator=generator,
-            device=rand_device,
-            dtype=torch.float32,
-        ).to(device=self.device, dtype=self.torch_dtype)
-
-        timestep_video = torch.zeros((1,), device=self.device, dtype=self.torch_dtype)
-        video_pre = self.video_expert.pre_dit(
-            first_frame=first_frame,
-            future_x=None,
-            timestep=timestep_video,
             context=context,
             context_mask=context_mask,
-        )
-        video_seq_len = int(video_pre["tokens"].shape[1])
-        attention_mask = self._build_mot_attention_mask(
-            video_seq_len=video_seq_len,
-            action_seq_len=action_horizon,
-            video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
-            device=self.device,
-        )
-        video_kv_cache = self.mot.prefill_video_cache(
-            video_tokens=video_pre["tokens"],
-            video_freqs=video_pre["freqs"],
-            video_t_mod=video_pre["t_mod"],
-            video_context_payload={
-                "context": video_pre["context"],
-                "mask": video_pre["context_mask"],
-            },
-            video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
-        )
-        timesteps, deltas = self.infer_action_scheduler.build_inference_schedule(
+            negative_prompt=negative_prompt,
+            text_cfg_scale=text_cfg_scale,
             num_inference_steps=num_inference_steps,
-            device=self.device,
-            dtype=action_x.dtype,
-            shift_override=sigma_shift,
+            sigma_shift=sigma_shift,
+            seed=seed,
+            rand_device=rand_device,
+            tiled=tiled,
+            test_action_with_infer_action=False,
         )
-        for step_t, step_delta in zip(timesteps, deltas):
-            pred_action = self._predict_action_noise_with_cache(
-                latents_action=action_x,
-                timestep_action=step_t.unsqueeze(0),
-                context=context,
-                context_mask=context_mask,
-                video_kv_cache=video_kv_cache,
-                attention_mask=attention_mask,
-                video_seq_len=video_seq_len,
-            )
-            action_x = self.infer_action_scheduler.step(pred_action, step_delta, action_x)
-        return {"action": action_x[0].detach().cpu().float()}
+        return {"action": result["action"]}
 
     @torch.no_grad()
     def infer_joint(
