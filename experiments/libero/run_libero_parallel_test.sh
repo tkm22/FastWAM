@@ -628,7 +628,7 @@ run_libero_eval() {
     echo "All tasks completed successfully!"
     # Run the result summarization script
     echo "Generating evaluation report..."
-    python experiments/libero/summarize_results.py --output_dir="$OUTPUT_DIR"
+    "$PYTHON_BIN" experiments/libero/summarize_results.py --output_dir="$OUTPUT_DIR"
 }
 
 

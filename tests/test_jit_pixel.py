@@ -246,6 +246,29 @@ def test_single_batch_backward_and_future_output_shape():
     assert output.shape == (2, 3, 8, 32, 32)
 
 
+def test_action_cache_and_joint_euler_inference_paths():
+    model = build_small_joint_model().eval()
+    common = {
+        "prompt": None,
+        "input_image": torch.randn(3, 32, 32).clamp(-1, 1),
+        "action_horizon": 8,
+        "num_video_frames": 9,
+        "context": torch.randn(1, 4, 24),
+        "context_mask": torch.ones(1, 4, dtype=torch.bool),
+        "num_inference_steps": 2,
+        "seed": 7,
+        "rand_device": "cpu",
+    }
+    action_only = model.infer_action(**common)
+    assert action_only["action"].shape == (8, 7)
+    assert torch.isfinite(action_only["action"]).all()
+
+    joint = model.infer_joint(**common)
+    assert len(joint["video"]) == 9
+    assert joint["action"].shape == (8, 7)
+    assert torch.isfinite(joint["action"]).all()
+
+
 def test_checkpoint_metadata_is_strict():
     model = build_small_joint_model()
     with tempfile.TemporaryDirectory() as tmp:
