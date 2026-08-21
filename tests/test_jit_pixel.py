@@ -339,7 +339,7 @@ def test_trainer_saves_paired_weights_and_state(tmp_path):
     assert (state_path / "trainer_state.json").is_file()
 
 
-def build_small_joint_model() -> FastWAMJointJiTPixel:
+def build_small_joint_model(*, proprio_dim: int | None = None) -> FastWAMJointJiTPixel:
     video = JiTPixelWanVideoDiT(**video_config())
     action = ActionDiT(
         action_dim=7,
@@ -362,7 +362,7 @@ def build_small_joint_model() -> FastWAMJointJiTPixel:
         mot=mot,
         vae=None,
         text_dim=24,
-        proprio_dim=None,
+        proprio_dim=proprio_dim,
         device="cpu",
         torch_dtype=torch.float32,
     )
@@ -475,6 +475,31 @@ def test_checkpoint_metadata_is_strict():
         torch.save(payload, checkpoint)
         with pytest.raises(ValueError, match="metadata mismatch"):
             model.load_checkpoint(checkpoint)
+
+
+def test_raw_checkpoint_restores_mot_and_proprio(tmp_path):
+    model = build_small_joint_model(proprio_dim=8)
+    checkpoint = tmp_path / "model.pt"
+    expected_mot = {
+        name: value.detach().clone() for name, value in model.mot.state_dict().items()
+    }
+    expected_proprio = {
+        name: value.detach().clone()
+        for name, value in model.proprio_encoder.state_dict().items()
+    }
+    model.save_checkpoint(checkpoint, step=3)
+
+    with torch.no_grad():
+        for parameter in model.mot.parameters():
+            parameter.add_(1)
+        for parameter in model.proprio_encoder.parameters():
+            parameter.add_(1)
+    model.load_checkpoint(checkpoint)
+
+    for name, value in model.mot.state_dict().items():
+        torch.testing.assert_close(value, expected_mot[name], rtol=0, atol=0)
+    for name, value in model.proprio_encoder.state_dict().items():
+        torch.testing.assert_close(value, expected_proprio[name], rtol=0, atol=0)
 
 
 def test_full_state_resume_validates_matching_raw_checkpoint():
