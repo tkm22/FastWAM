@@ -275,6 +275,45 @@ def test_resume_position_advances_at_epoch_boundary():
     )
 
 
+def test_trainer_saves_paired_weights_and_state(tmp_path):
+    class FakeModel:
+        def save_checkpoint(self, path, optimizer=None, step=None):
+            assert optimizer is None
+            torch.save({"step": step}, path)
+
+    class FakeAccelerator:
+        is_main_process = True
+
+        def wait_for_everyone(self):
+            pass
+
+        def unwrap_model(self, model):
+            return model
+
+        def save_state(self, output_dir):
+            Path(output_dir, "rank_state.pt").write_bytes(b"state")
+
+    trainer = Wan22Trainer.__new__(Wan22Trainer)
+    trainer.model = FakeModel()
+    trainer.accelerator = FakeAccelerator()
+    trainer.weights_dir = str(tmp_path / "checkpoints" / "weights")
+    trainer.state_dir = str(tmp_path / "checkpoints" / "state")
+    Path(trainer.weights_dir).mkdir(parents=True)
+    Path(trainer.state_dir).mkdir(parents=True)
+    trainer.global_step = 2000
+    trainer.epoch = 0
+    trainer.batch_in_epoch = 2000
+
+    paths = trainer.save_checkpoint()
+
+    assert Path(paths["weights_path"]).name == "step_002000.pt"
+    assert Path(paths["weights_path"]).is_file()
+    state_path = Path(paths["state_path"])
+    assert state_path.name == "step_002000"
+    assert (state_path / "rank_state.pt").is_file()
+    assert (state_path / "trainer_state.json").is_file()
+
+
 def build_small_joint_model() -> FastWAMJointJiTPixel:
     video = JiTPixelWanVideoDiT(**video_config())
     action = ActionDiT(
