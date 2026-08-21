@@ -641,8 +641,10 @@ class Wan22Trainer:
             self.global_step = int(payload["global_step"])
 
             if "epoch" in payload and "batch_in_epoch" in payload:
-                self.epoch = int(payload["epoch"])
-                self.batch_in_epoch = int(payload["batch_in_epoch"])
+                self.epoch, self.batch_in_epoch = self._normalize_resume_position(
+                    epoch=int(payload["epoch"]),
+                    batch_in_epoch=int(payload["batch_in_epoch"]),
+                )
                 self.train_sampler.set_epoch_offset(self.epoch)
                 self.train_sampler.set_resume_batch_offset(self.batch_in_epoch)
                 logger.info(
@@ -676,6 +678,20 @@ class Wan22Trainer:
             "State file `%s` is missing; dataloader progress resume is skipped.",
             state_file,
         )
+
+    def _normalize_resume_position(
+        self, *, epoch: int, batch_in_epoch: int
+    ) -> tuple[int, int]:
+        if epoch < 0 or batch_in_epoch < 0:
+            raise ValueError(
+                "Checkpoint dataloader position must be non-negative, got "
+                f"epoch={epoch}, batch_in_epoch={batch_in_epoch}"
+            )
+        batches_per_epoch = len(self.train_loader)
+        if batches_per_epoch <= 0:
+            raise ValueError("Cannot resume with an empty training dataloader")
+        completed_epochs, batch_in_epoch = divmod(batch_in_epoch, batches_per_epoch)
+        return epoch + completed_epochs, batch_in_epoch
 
     def train(self):
         self._set_dit_only_train_mode()

@@ -260,6 +260,20 @@ def test_resume_lr_reset_preserves_configured_constant_scheduler():
         assert trainer.optimizer.param_groups[0]["lr"] == pytest.approx(1.0e-6)
 
 
+def test_resume_position_advances_at_epoch_boundary():
+    trainer = Wan22Trainer.__new__(Wan22Trainer)
+    trainer.train_loader = range(2170)
+
+    assert trainer._normalize_resume_position(epoch=9, batch_in_epoch=2169) == (
+        9,
+        2169,
+    )
+    assert trainer._normalize_resume_position(epoch=9, batch_in_epoch=2170) == (
+        10,
+        0,
+    )
+
+
 def build_small_joint_model() -> FastWAMJointJiTPixel:
     video = JiTPixelWanVideoDiT(**video_config())
     action = ActionDiT(
