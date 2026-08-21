@@ -397,6 +397,12 @@ def test_full_state_resume_validates_matching_raw_checkpoint():
         with pytest.raises(ValueError, match="metadata mismatch"):
             model.validate_training_state(str(state_dir))
 
+        payload["jit_pixel"] = model._checkpoint_metadata()
+        payload["step"] = 2
+        torch.save(payload, weights_path)
+        with pytest.raises(ValueError, match="raw/state step mismatch"):
+            model.validate_training_state(str(state_dir))
+
 
 def test_pixel_model_source_has_no_asym_or_vae_runtime_imports():
     source_paths = [

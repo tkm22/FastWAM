@@ -633,6 +633,9 @@ class FastWAMJointJiTPixel(FastWAMJoint):
 
     def validate_training_state(self, state_dir: str) -> None:
         state_path = Path(state_dir)
+        step_match = state_path.name.removeprefix("step_")
+        if not step_match.isdigit():
+            raise ValueError(f"Invalid JiT pixel state directory name: {state_path.name}")
         weights_path = state_path.parent.parent / "weights" / f"{state_path.name}.pt"
         if not weights_path.is_file():
             raise FileNotFoundError(
@@ -640,6 +643,12 @@ class FastWAMJointJiTPixel(FastWAMJoint):
             )
         payload = torch.load(weights_path, map_location="cpu", mmap=True)
         self._validate_checkpoint_metadata(payload, weights_path)
+        expected_step = int(step_match)
+        if payload.get("step") != expected_step:
+            raise ValueError(
+                "JiT pixel raw/state step mismatch: "
+                f"checkpoint={payload.get('step')}, state={expected_step}"
+            )
 
     def save_checkpoint(self, path, optimizer=None, step=None):
         payload = {
