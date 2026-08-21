@@ -50,6 +50,7 @@ def video_config(*, patch: int = 16, layers: int = 1) -> dict:
         "require_clip_embedding": False,
         "fuse_vae_embedding_in_latents": True,
         "action_conditioned": False,
+        "video_attention_mask_mode": "first_frame_causal",
         "pixel_patch_size": patch,
         "future_tube_size": 4,
         "bottleneck_dim": 192,
