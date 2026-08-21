@@ -314,7 +314,9 @@ def test_single_batch_backward_and_future_output_shape():
         "image_is_pad": torch.tensor(
             [[False] * 9, [False, False, False, False, False, True, True, True, True]]
         ),
-        "action_is_pad": torch.zeros(2, 32, dtype=torch.bool),
+        "action_is_pad": torch.tensor(
+            [[False] * 32, [False] * 16 + [True] * 16]
+        ),
     }
     loss, metrics = model.training_loss(sample)
     loss.backward()
@@ -342,6 +344,20 @@ def test_single_batch_backward_and_future_output_shape():
     )
     output = model.video_expert.post_dit(video_pre["tokens"], video_pre)
     assert output.shape == (2, 3, 8, 32, 32)
+
+
+def test_video_loss_ignores_padded_future_frames():
+    pred = torch.zeros(2, 3, 8, 4, 4)
+    target = torch.zeros_like(pred)
+    target[0, :, 4:] = 100.0
+    future_is_pad = torch.tensor(
+        [[False] * 4 + [True] * 4, [False] * 8]
+    )
+
+    loss = FastWAMJointJiTPixel._masked_temporal_mse(
+        pred, target, future_is_pad
+    )
+    torch.testing.assert_close(loss, torch.zeros_like(loss))
 
 
 def test_action_and_joint_euler_inference_paths_match():
