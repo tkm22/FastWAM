@@ -21,7 +21,6 @@ num_epochs: 10
 max_steps: null
 log_every: 10
 save_every: 2000
-save_training_state: true
 eval_every: 0
 
 gradient_accumulation_steps: 1
