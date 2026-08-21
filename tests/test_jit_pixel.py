@@ -29,6 +29,7 @@ from fastwam.models.wan22.jit_pixel_packing import (
 from fastwam.models.wan22.jit_pixel_video_dit import JiTPixelWanVideoDiT
 from fastwam.models.wan22.mot import MoT
 from fastwam.models.wan22.wan_video_dit import WanVideoDiT
+from fastwam.utils.samplers import ResumableEpochSampler
 
 
 def video_config(*, patch: int = 16, layers: int = 1) -> dict:
@@ -273,6 +274,30 @@ def test_resume_position_advances_at_epoch_boundary():
         10,
         0,
     )
+
+
+def test_resume_sampler_matches_uninterrupted_sample_order():
+    dataset = range(37)
+    kwargs = {
+        "dataset": dataset,
+        "seed": 42,
+        "batch_size": 2,
+        "num_processes": 4,
+    }
+
+    uninterrupted = ResumableEpochSampler(**kwargs)
+    uninterrupted.set_epoch(9)
+    epoch_nine = list(uninterrupted)
+
+    resumed = ResumableEpochSampler(**kwargs)
+    resumed.set_epoch_offset(9)
+    resumed.set_resume_batch_offset(3)
+    assert list(resumed) == epoch_nine[3 * 2 * 4 :]
+
+    uninterrupted.set_epoch(10)
+    resumed.clear_resume_batch_offset()
+    resumed.set_epoch(1)
+    assert list(resumed) == list(uninterrupted)
 
 
 def test_trainer_saves_paired_weights_and_state(tmp_path):
