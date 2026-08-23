@@ -458,6 +458,7 @@ def run_training(cfg: DictConfig):
         val_dataset=val_ds,
     )
     trainer.train()
+    trainer.accelerator.end_training()
 
 def run_inference(cfg: DictConfig):
     setup_logging(log_level=logging.INFO)

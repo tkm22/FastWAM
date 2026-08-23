@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -207,6 +208,9 @@ def test_training_seeds_before_model_initialization(monkeypatch, tmp_path):
     class FakeTrainer:
         def __init__(self, *args, **kwargs):
             events.append(("trainer",))
+            self.accelerator = SimpleNamespace(
+                end_training=lambda: events.append(("end_training",))
+            )
 
         def train(self):
             events.append(("train",))
@@ -230,6 +234,7 @@ def test_training_seeds_before_model_initialization(monkeypatch, tmp_path):
     runtime.run_training(cfg)
 
     assert events[:2] == [("seed", 42, False), ("instantiate", "model")]
+    assert events[-2:] == [("train",), ("end_training",)]
 
 
 def test_resume_lr_reset_preserves_configured_constant_scheduler():
