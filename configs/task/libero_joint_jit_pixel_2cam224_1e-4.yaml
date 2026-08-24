@@ -26,4 +26,3 @@ eval_every: 200
 gradient_accumulation_steps: 1
 weight_decay: 1.0e-2
 resume: null
-reset_lr_on_resume: false

@@ -1,4 +1,3 @@
-import copy
 import logging
 import json
 import inspect
@@ -49,10 +48,6 @@ class Wan22Trainer:
         self.seed = int(cfg.seed)
         
         self.resume = cfg.resume
-        self.reset_lr_on_resume = bool(cfg.get("reset_lr_on_resume", False))
-        self.lr_scheduler_type = str(cfg.lr_scheduler_type).strip().lower()
-        if self.reset_lr_on_resume and self.lr_scheduler_type != "constant":
-            raise ValueError("`reset_lr_on_resume=true` requires `lr_scheduler_type=constant`")
         self.mixed_precision = str(cfg.mixed_precision).strip().lower()
         if self.mixed_precision not in {"no", "fp16", "bf16"}:
             raise ValueError(
@@ -107,13 +102,9 @@ class Wan22Trainer:
         self.train_loader = self._build_loader(self.train_dataset, worker_init_fn=worker_init_fn)
         total_train_steps = self._estimate_total_train_steps()
         self.max_steps = total_train_steps
-        warmup_steps = (
-            0
-            if self.resume and self.reset_lr_on_resume
-            else int(total_train_steps * 0.05)
-        )
+        warmup_steps = int(total_train_steps * 0.05)
         self.scheduler = self._build_scheduler(
-            scheduler_type=self.lr_scheduler_type,
+            scheduler_type=cfg.lr_scheduler_type,
             total_train_steps=total_train_steps,
             warmup_steps=warmup_steps,
         )
@@ -134,11 +125,6 @@ class Wan22Trainer:
 
         self.model, self.optimizer, self.train_loader, self.scheduler = self.accelerator.prepare(
             self.model, self.optimizer, self.train_loader, self.scheduler
-        )
-        self._configured_resume_scheduler_state = (
-            copy.deepcopy(self.scheduler.state_dict())
-            if self.resume and self.reset_lr_on_resume
-            else None
         )
         self.optimizer.zero_grad(set_to_none=True)
         self.wandb_run = None
@@ -290,28 +276,12 @@ class Wan22Trainer:
         if resume_path.is_dir():
             logger.info("Resuming full training state from directory: %s", resume)
             self.load_training_state(str(resume_path))
-            if self.reset_lr_on_resume:
-                self._use_configured_scheduler_after_resume()
             return
         if not resume_path.exists():
             raise FileNotFoundError(f"Resume checkpoint not found: {resume}")
         logger.info("Loading weight checkpoint only: %s", resume)
         self.accelerator.unwrap_model(self.model).load_checkpoint(str(resume_path), optimizer=None)
         logger.warning("Loaded .pt weights only; optimizer/scheduler/step were not restored under ZeRO2.")
-
-    def _use_configured_scheduler_after_resume(self):
-        self.scheduler.load_state_dict(self._configured_resume_scheduler_state)
-        configured_lrs = self.scheduler.get_last_lr()
-        for param_group, configured_lr in zip(
-            self.optimizer.param_groups, configured_lrs, strict=True
-        ):
-            param_group["lr"] = configured_lr
-            param_group["initial_lr"] = configured_lr
-        logger.info(
-            "Using configured constant scheduler after resume at lr=%s; "
-            "optimizer moments remain restored.",
-            configured_lrs,
-        )
 
     def _set_dit_only_train_mode(self):
         logger.info("Restoring configured trainable modules and freezing all other components.")
