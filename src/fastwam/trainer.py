@@ -81,6 +81,8 @@ class Wan22Trainer:
 
         # Freeze non-trainable modules before optimizer/deepspeed initialization.
         self._apply_dit_only_train_mode(self.model)
+        self._raw_resume_loaded_before_prepare = False
+        self._load_raw_weights_before_prepare()
         trainable_params = [parameter for parameter in self.model.parameters() if parameter.requires_grad]
         if not trainable_params:
             raise ValueError("Configured training mode produced no trainable parameters")
@@ -268,6 +270,20 @@ class Wan22Trainer:
         eta_m, eta_s = divmod(eta_rem, 60)
         return f"{eta_h:02d}:{eta_m:02d}:{eta_s:02d}", steps_per_sec
 
+    def _load_raw_weights_before_prepare(self):
+        resume = self.resume
+        if not resume:
+            return
+        resume_path = Path(str(resume))
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume}")
+        if resume_path.is_dir():
+            return
+
+        logger.info("Loading raw weight checkpoint before optimizer/ZeRO initialization: %s", resume)
+        self.model.load_checkpoint(str(resume_path), optimizer=None)
+        self._raw_resume_loaded_before_prepare = True
+
     def _resume_or_load_checkpoint(self):
         resume = self.resume
         if not resume:
@@ -277,11 +293,14 @@ class Wan22Trainer:
             logger.info("Resuming full training state from directory: %s", resume)
             self.load_training_state(str(resume_path))
             return
-        if not resume_path.exists():
-            raise FileNotFoundError(f"Resume checkpoint not found: {resume}")
-        logger.info("Loading weight checkpoint only: %s", resume)
-        self.accelerator.unwrap_model(self.model).load_checkpoint(str(resume_path), optimizer=None)
-        logger.warning("Loaded .pt weights only; optimizer/scheduler/step were not restored under ZeRO2.")
+        if not self._raw_resume_loaded_before_prepare:
+            raise RuntimeError(
+                "Raw weight checkpoint must be loaded before optimizer/ZeRO initialization"
+            )
+        logger.info(
+            "Raw weights loaded before optimizer/ZeRO initialization; "
+            "starting fresh optimizer, scheduler, and step state."
+        )
 
     def _set_dit_only_train_mode(self):
         logger.info("Restoring configured trainable modules and freezing all other components.")
