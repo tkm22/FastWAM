@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import sys
@@ -91,8 +92,20 @@ def test_pixel_packing_round_trip(patch: int, first_dim: int, future_dim: int):
     )
 
 
-def test_p16_matches_wan_1176_token_grid():
-    model = JiTPixelWanVideoDiT(**video_config())
+@pytest.mark.parametrize(
+    ("patch", "expected_tokens", "expected_grid"),
+    [
+        (8, 4704, (3, 28, 56)),
+        (16, 1176, (3, 14, 28)),
+        (32, 294, (3, 7, 14)),
+    ],
+)
+def test_pixel_token_grids(
+    patch: int,
+    expected_tokens: int,
+    expected_grid: tuple[int, int, int],
+):
+    model = JiTPixelWanVideoDiT(**video_config(patch=patch))
     state = model.pre_dit(
         first_frame=torch.randn(1, 3, 224, 448),
         future_x=torch.randn(1, 3, 8, 224, 448),
@@ -100,10 +113,17 @@ def test_p16_matches_wan_1176_token_grid():
         context=torch.randn(1, 5, 24),
         context_mask=torch.ones(1, 5, dtype=torch.bool),
     )
-    assert state["tokens"].shape == (1, 1176, 48)
-    assert state["meta"]["grid_size"] == (3, 14, 28)
-    assert state["meta"]["tokens_per_frame"] == 392
+    assert state["tokens"].shape == (1, expected_tokens, 48)
+    assert state["meta"]["grid_size"] == expected_grid
+    assert state["meta"]["tokens_per_frame"] == expected_grid[1] * expected_grid[2]
     assert model.post_dit(state["tokens"], state).shape == (1, 3, 8, 224, 448)
+
+
+def test_p32_matches_wan_vae38_token_grid_at_224x448():
+    # WanVideoVAE38 downsamples spatially by 16, then the Wan DiT uses a 2x2 patch.
+    wan_grid = (3, (224 // 16) // 2, (448 // 16) // 2)
+    assert wan_grid == (3, 7, 14)
+    assert math.prod(wan_grid) == 294
 
 
 def test_dynamic_shapes_and_invalid_sizes():
