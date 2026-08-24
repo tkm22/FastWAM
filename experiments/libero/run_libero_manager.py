@@ -1,6 +1,7 @@
 import os
 import shlex
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -91,6 +92,7 @@ def run_evaluation(
             "OUTPUT_DIR": str(output_dir),
             "EXTRA_ARGS": extra_args,
             "EXP_NAME": os.environ.get("EXP_NAME", ""),
+            "PYTHON_BIN": os.environ.get("PYTHON_BIN", sys.executable),
         }
     )
 
