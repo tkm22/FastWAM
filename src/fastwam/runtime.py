@@ -258,6 +258,7 @@ def create_fastwam_joint_jit_pixel(
     action_scheduler=None,
     loss=None,
     jit=None,
+    adapter_only_finetune: bool = False,
     mot_checkpoint_mixed_attn: bool = True,
     redirect_common_files: bool = True,
     model_dtype: torch.dtype = torch.bfloat16,
@@ -318,6 +319,7 @@ def create_fastwam_joint_jit_pixel(
         p_std=float(jit["p_std"]),
         noise_scale=float(jit["noise_scale"]),
         t_eps=float(jit["t_eps"]),
+        adapter_only_finetune=bool(adapter_only_finetune),
     )
 
 

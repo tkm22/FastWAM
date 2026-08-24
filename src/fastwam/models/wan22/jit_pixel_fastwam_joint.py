@@ -26,6 +26,7 @@ class FastWAMJointJiTPixel(FastWAMJoint):
         p_std: float = 0.8,
         noise_scale: float = 1.0,
         t_eps: float = 0.05,
+        adapter_only_finetune: bool = False,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -40,6 +41,7 @@ class FastWAMJointJiTPixel(FastWAMJoint):
         self.p_std = float(p_std)
         self.noise_scale = float(noise_scale)
         self.t_eps = float(t_eps)
+        self.adapter_only_finetune = bool(adapter_only_finetune)
 
     @property
     def pixel_patch_size(self) -> int:
@@ -81,6 +83,7 @@ class FastWAMJointJiTPixel(FastWAMJoint):
         p_std: float = 0.8,
         noise_scale: float = 1.0,
         t_eps: float = 0.05,
+        adapter_only_finetune: bool = False,
     ) -> "FastWAMJointJiTPixel":
         if not isinstance(video_dit_config, dict):
             raise ValueError("`video_dit_config` is required for JiT pixel FastWAM-Joint")
@@ -142,6 +145,7 @@ class FastWAMJointJiTPixel(FastWAMJoint):
             p_std=p_std,
             noise_scale=noise_scale,
             t_eps=t_eps,
+            adapter_only_finetune=adapter_only_finetune,
         )
         model.model_paths = {
             "video_dit": components.dit_path,
@@ -152,6 +156,35 @@ class FastWAMJointJiTPixel(FastWAMJoint):
             ),
         }
         return model
+
+    def configure_training_mode(self) -> bool:
+        """Freeze pretrained backbones and train only the pixel/action boundaries."""
+        if not self.adapter_only_finetune:
+            return False
+
+        self.eval()
+        self.requires_grad_(False)
+
+        # Keep the MoT wrapper marked as training so trainer eval can restore this mode.
+        self.dit.train()
+        self.video_expert.eval()
+        self.action_expert.eval()
+
+        trainable_modules = (
+            self.video_expert.first_patch_down,
+            self.video_expert.future_patch_down,
+            self.video_expert.wan_patch_projection,
+            self.video_expert.head,
+            self.action_expert.action_encoder,
+            self.action_expert.head,
+        )
+        for module in trainable_modules:
+            module.train()
+            module.requires_grad_(True)
+        if self.proprio_encoder is not None:
+            self.proprio_encoder.train()
+            self.proprio_encoder.requires_grad_(True)
+        return True
 
     def _validate_video_shape(self, video: torch.Tensor) -> tuple[int, int, int, int]:
         if video.ndim != 5 or video.shape[1] != 3:

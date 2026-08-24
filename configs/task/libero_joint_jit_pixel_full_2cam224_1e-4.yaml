@@ -1,0 +1,30 @@
+# @package _global_
+
+defaults:
+  - override /data: libero_2cam
+  - override /model: fastwam_joint_jit_pixel
+  - _self_
+
+batch_size: 16
+num_workers: 8
+
+model:
+  adapter_only_finetune: false
+  mot_checkpoint_mixed_attn: false
+  video_dit_config:
+    use_gradient_checkpointing: true
+  action_dit_config:
+    use_gradient_checkpointing: true
+
+lr_scheduler_type: cosine
+learning_rate: 1.0e-4
+num_epochs: 10
+max_steps: null
+log_every: 10
+save_every: 2000
+eval_every: 200
+
+gradient_accumulation_steps: 1
+weight_decay: 1.0e-2
+resume: null
+reset_lr_on_resume: false

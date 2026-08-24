@@ -85,12 +85,18 @@ class Wan22Trainer:
             self._assert_dataset_length_consistent(self.val_dataset, "val_dataset")
 
         # Freeze non-trainable modules before optimizer/deepspeed initialization.
-        # This keeps DiT (+ optional proprio encoder) as trainable when ZeRO builds optimizer state.
         self._apply_dit_only_train_mode(self.model)
-        trainable_params = list(self.model.dit.parameters())
-        proprio_encoder = getattr(self.model, "proprio_encoder", None)
-        if proprio_encoder is not None:
-            trainable_params.extend(list(proprio_encoder.parameters()))
+        trainable_params = [parameter for parameter in self.model.parameters() if parameter.requires_grad]
+        if not trainable_params:
+            raise ValueError("Configured training mode produced no trainable parameters")
+        trainable_count = sum(parameter.numel() for parameter in trainable_params)
+        total_count = sum(parameter.numel() for parameter in self.model.parameters())
+        logger.info(
+            "Optimizer parameters: trainable=%d total=%d fraction=%.6f",
+            trainable_count,
+            total_count,
+            trainable_count / total_count,
+        )
         self.optimizer = torch.optim.AdamW(
             trainable_params,
             lr=self.learning_rate,
@@ -308,13 +314,17 @@ class Wan22Trainer:
         )
 
     def _set_dit_only_train_mode(self):
-        # Match DiffSynth's freeze_except("dit"): only DiT stays trainable/in-train-mode.
-        logger.info("Setting DiT to train mode and freezing other model components.")
+        logger.info("Restoring configured trainable modules and freezing all other components.")
         model = self.accelerator.unwrap_model(self.model)
         self._apply_dit_only_train_mode(model)
 
     @staticmethod
     def _apply_dit_only_train_mode(model):
+        configure_training_mode = getattr(model, "configure_training_mode", None)
+        if configure_training_mode is not None and configure_training_mode():
+            return
+
+        # Match DiffSynth's freeze_except("dit") for legacy models.
         model.eval()
         model.requires_grad_(False)
         model.dit.train()
