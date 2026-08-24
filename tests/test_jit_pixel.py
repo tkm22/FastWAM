@@ -11,6 +11,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+import fastwam.trainer as trainer_module
 from fastwam import runtime
 from fastwam.trainer import Wan22Trainer
 from fastwam.models.wan22.action_dit import ActionDiT
@@ -279,6 +280,93 @@ def test_resume_position_advances_at_epoch_boundary():
         10,
         0,
     )
+
+
+def test_vafree_eval_metrics_skip_decode_and_use_pred_gt_panels():
+    class VaeFreeModel:
+        vae = None
+
+        def _encode_video_latents(self, *args, **kwargs):
+            raise AssertionError("VAE encode must not run for JiT pixel evaluation")
+
+        def _decode_latents(self, *args, **kwargs):
+            raise AssertionError("VAE decode must not run for JiT pixel evaluation")
+
+    trainer = Wan22Trainer.__new__(Wan22Trainer)
+    video0 = torch.rand(3, 3, 8, 8) * 2.0 - 1.0
+    gt = (video0 + 1.0) * 0.5
+    pred = gt.mul(0.9)
+
+    metrics, stitched = trainer._compute_eval_video_metrics(
+        model=VaeFreeModel(),
+        video0=video0,
+        pred_video_tensor=pred,
+        gt_video_tensor=gt,
+    )
+
+    assert set(metrics) == {"psnr_rg", "ssim_rg"}
+    assert stitched.shape == (3, 3, 16, 8)
+    torch.testing.assert_close(stitched[:, :, :8], pred)
+    torch.testing.assert_close(stitched[:, :, 8:], gt)
+
+
+def test_legacy_eval_metrics_keep_vae_comparisons(monkeypatch):
+    video0 = torch.rand(3, 3, 8, 8) * 2.0 - 1.0
+    gt = (video0 + 1.0) * 0.5
+    pred = gt.mul(0.9)
+    recon = gt.mul(0.8)
+    encoded = object()
+    decoded = object()
+
+    class LegacyModel:
+        vae = object()
+        device = torch.device("cpu")
+        torch_dtype = torch.float32
+
+        def _encode_video_latents(self, video, *, tiled):
+            torch.testing.assert_close(video, video0.unsqueeze(0))
+            assert tiled is False
+            return encoded
+
+        def _decode_latents(self, latents, *, tiled):
+            assert latents is encoded
+            assert tiled is False
+            return decoded
+
+    def fake_frames_to_tensor(frames):
+        assert frames is decoded
+        return recon
+
+    monkeypatch.setattr(
+        trainer_module,
+        "pil_frames_to_video_tensor",
+        fake_frames_to_tensor,
+    )
+    trainer = Wan22Trainer.__new__(Wan22Trainer)
+    metrics, stitched = trainer._compute_eval_video_metrics(
+        model=LegacyModel(),
+        video0=video0,
+        pred_video_tensor=pred,
+        gt_video_tensor=gt,
+    )
+
+    assert set(metrics) == {
+        "psnr_rg",
+        "ssim_rg",
+        "psnr_rd",
+        "ssim_rd",
+        "psnr_dg",
+        "ssim_dg",
+    }
+    assert stitched.shape == (3, 3, 24, 8)
+    torch.testing.assert_close(stitched[:, :, :8], pred)
+    torch.testing.assert_close(stitched[:, :, 8:16], recon)
+    torch.testing.assert_close(stitched[:, :, 16:], gt)
+
+
+def test_jit_pixel_recipe_enables_fastwam_periodic_eval():
+    cfg = OmegaConf.load("configs/task/libero_joint_jit_pixel_2cam224_1e-4.yaml")
+    assert cfg.eval_every == 200
 
 
 def test_resume_sampler_matches_uninterrupted_sample_order():

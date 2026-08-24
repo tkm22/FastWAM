@@ -404,6 +404,47 @@ class Wan22Trainer:
         }
 
     @torch.no_grad()
+    def _compute_eval_video_metrics(
+        self,
+        *,
+        model,
+        video0: torch.Tensor,
+        pred_video_tensor: torch.Tensor,
+        gt_video_tensor: torch.Tensor,
+    ) -> tuple[dict[str, float], torch.Tensor]:
+        metrics = {
+            "psnr_rg": video_psnr(pred=pred_video_tensor, target=gt_video_tensor),
+            "ssim_rg": video_ssim(pred=pred_video_tensor, target=gt_video_tensor),
+        }
+        panels = [pred_video_tensor]
+
+        if getattr(model, "vae", None) is not None:
+            gt_video_batch = video0.unsqueeze(0).to(
+                device=model.device,
+                dtype=model.torch_dtype,
+            )
+            vae_latents = model._encode_video_latents(gt_video_batch, tiled=False)
+            vae_recon_video = model._decode_latents(vae_latents, tiled=False)
+            vae_video_tensor = pil_frames_to_video_tensor(vae_recon_video)
+
+            assert vae_video_tensor.shape == gt_video_tensor.shape, (
+                "Eval VAE reconstruction/GT shape mismatch: "
+                f"vae={tuple(vae_video_tensor.shape)} vs gt={tuple(gt_video_tensor.shape)}"
+            )
+            metrics.update(
+                {
+                    "psnr_rd": video_psnr(pred=pred_video_tensor, target=vae_video_tensor),
+                    "ssim_rd": video_ssim(pred=pred_video_tensor, target=vae_video_tensor),
+                    "psnr_dg": video_psnr(pred=vae_video_tensor, target=gt_video_tensor),
+                    "ssim_dg": video_ssim(pred=vae_video_tensor, target=gt_video_tensor),
+                }
+            )
+            panels.append(vae_video_tensor)
+
+        panels.append(gt_video_tensor)
+        return metrics, torch.cat(panels, dim=2).contiguous()
+
+    @torch.no_grad()
     def evaluate(self):
         if self.val_dataset is None:
             return None
@@ -465,9 +506,6 @@ class Wan22Trainer:
             f"pred={tuple(pred_video_tensor.shape)} vs gt={tuple(gt_video_tensor.shape)}"
         )
 
-        psnr_rollout_vs_gt = video_psnr(pred=pred_video_tensor, target=gt_video_tensor)
-        ssim_rollout_vs_gt = video_ssim(pred=pred_video_tensor, target=gt_video_tensor)
-
         action_l1 = None
         action_l2 = None
         if action is not None and pred_action is not None:
@@ -523,27 +561,13 @@ class Wan22Trainer:
             action_l1 = action_diff.abs().mean().item()
             action_l2 = action_diff.pow(2).mean().item()
 
-        # 4. VAE reconstruction metrics against GT video
-        gt_video_batch = video0.unsqueeze(0).to(device=model.device, dtype=model.torch_dtype)
-        vae_latents = model._encode_video_latents(gt_video_batch, tiled=False)
-        vae_recon_video = model._decode_latents(vae_latents, tiled=False)
-        vae_video_tensor = pil_frames_to_video_tensor(vae_recon_video)
-
-        assert vae_video_tensor.shape == gt_video_tensor.shape, (
-            "Eval VAE reconstruction/GT shape mismatch: "
-            f"vae={tuple(vae_video_tensor.shape)} vs gt={tuple(gt_video_tensor.shape)}"
+        # 4. Legacy models additionally compare against their VAE reconstruction.
+        video_metrics, stitched_video_tensor = self._compute_eval_video_metrics(
+            model=model,
+            video0=video0,
+            pred_video_tensor=pred_video_tensor,
+            gt_video_tensor=gt_video_tensor,
         )
-
-        psnr_decode_vs_gt = video_psnr(pred=vae_video_tensor, target=gt_video_tensor)
-        ssim_decode_vs_gt = video_ssim(pred=vae_video_tensor, target=gt_video_tensor)
-
-        psnr_rollout_vs_decode = video_psnr(pred=pred_video_tensor, target=vae_video_tensor)
-        ssim_rollout_vs_decode = video_ssim(pred=pred_video_tensor, target=vae_video_tensor)
-
-        stitched_video_tensor = torch.cat(
-            [pred_video_tensor, vae_video_tensor, gt_video_tensor],
-            dim=2,
-        ).contiguous()
         stitched_frames = []
         for t in range(stitched_video_tensor.shape[1]):
             frame = (stitched_video_tensor[:, t].permute(1, 2, 0).clamp(0.0, 1.0).numpy() * 255.0).astype(np.uint8)
@@ -558,12 +582,12 @@ class Wan22Trainer:
         local_metrics = torch.tensor(
             [
                 float(val_loss),
-                float(psnr_rollout_vs_gt),
-                float(ssim_rollout_vs_gt),
-                float(psnr_rollout_vs_decode),
-                float(ssim_rollout_vs_decode),
-                float(psnr_decode_vs_gt),
-                float(ssim_decode_vs_gt),
+                float(video_metrics["psnr_rg"]),
+                float(video_metrics["ssim_rg"]),
+                float(video_metrics.get("psnr_rd", 0.0)),
+                float(video_metrics.get("ssim_rd", 0.0)),
+                float(video_metrics.get("psnr_dg", 0.0)),
+                float(video_metrics.get("ssim_dg", 0.0)),
                 float(action_l2) if action_l2 is not None else -1.0,
                 float(action_l1) if action_l1 is not None else -1.0,
             ],
@@ -582,12 +606,17 @@ class Wan22Trainer:
             "val_loss": float(mean_metrics[0].item()),
             "psnr_rg": float(mean_metrics[1].item()),
             "ssim_rg": float(mean_metrics[2].item()),
-            "psnr_rd": float(mean_metrics[3].item()),
-            "ssim_rd": float(mean_metrics[4].item()),
-            "psnr_dg": float(mean_metrics[5].item()),
-            "ssim_dg": float(mean_metrics[6].item()),
             "video_path": video_path,
         }
+        if "psnr_rd" in video_metrics:
+            result.update(
+                {
+                    "psnr_rd": float(mean_metrics[3].item()),
+                    "ssim_rd": float(mean_metrics[4].item()),
+                    "psnr_dg": float(mean_metrics[5].item()),
+                    "ssim_dg": float(mean_metrics[6].item()),
+                }
+            )
         if action_l2_mean is not None:
             result["action_l2"] = float(action_l2_mean)
         if action_l1_mean is not None:
@@ -783,11 +812,13 @@ class Wan22Trainer:
                         metrics = self.evaluate()
                         self.accelerator.wait_for_everyone()
                         if metrics is not None and self.accelerator.is_main_process:
+                            infer_psnr = metrics.get("psnr_rd", metrics["psnr_rg"])
+                            infer_ssim = metrics.get("ssim_rd", metrics["ssim_rg"])
                             description = "[eval] step=%d val_loss=%.4f infer_psnr=%.4f infer_ssim=%.4f" % (
                                 self.global_step,
                                 metrics["val_loss"],
-                                metrics["psnr_rd"],
-                                metrics["ssim_rd"],
+                                infer_psnr,
+                                infer_ssim,
                             )
                             if "action_l2" in metrics:
                                 description += " action_l2=%.4f" % metrics["action_l2"]
@@ -798,11 +829,10 @@ class Wan22Trainer:
                                 "eval/val_loss": float(metrics["val_loss"]),
                                 "eval/psnr_rg": float(metrics["psnr_rg"]),
                                 "eval/ssim_rg": float(metrics["ssim_rg"]),
-                                "eval/psnr_rd": float(metrics["psnr_rd"]),
-                                "eval/ssim_rd": float(metrics["ssim_rd"]),
-                                "eval/psnr_dg": float(metrics["psnr_dg"]),
-                                "eval/ssim_dg": float(metrics["ssim_dg"]),
                             }
+                            for key in ("psnr_rd", "ssim_rd", "psnr_dg", "ssim_dg"):
+                                if key in metrics:
+                                    eval_payload[f"eval/{key}"] = float(metrics[key])
                             if "action_l2" in metrics:
                                 eval_payload["eval/action_l2"] = float(metrics["action_l2"])
                             if "action_l1" in metrics:
