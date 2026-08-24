@@ -313,6 +313,21 @@ class Wan22Trainer:
         context = sample.get("context", None)
         context_mask = sample.get("context_mask", None)
 
+        def batch_padding_mask(name, *, batch_size, length):
+            mask = sample.get(name, None)
+            if mask is None:
+                return None
+            if not isinstance(mask, torch.Tensor):
+                raise TypeError(f"`sample['{name}']` must be a torch.Tensor, got {type(mask)}")
+            if mask.ndim == 1:
+                mask = mask.unsqueeze(0)
+            if mask.ndim != 2 or mask.shape != (batch_size, length):
+                raise ValueError(
+                    f"`sample['{name}']` must have shape ({batch_size}, {length}), "
+                    f"got {tuple(mask.shape)}"
+                )
+            return mask.to(dtype=torch.bool)
+
         if not isinstance(video, torch.Tensor):
             raise TypeError(
                 f"Expected tensor video for evaluation, got {type(video)}. "
@@ -325,6 +340,11 @@ class Wan22Trainer:
         num_video_frames = video.shape[2]
         if num_video_frames <= 1:
             raise ValueError(f"`sample['video']` must have at least 2 frames for action evaluation, got {num_video_frames}")
+        image_is_pad = batch_padding_mask(
+            "image_is_pad",
+            batch_size=video.shape[0],
+            length=num_video_frames,
+        )
 
         if isinstance(prompt, str):
             prompt = [prompt]
@@ -350,6 +370,15 @@ class Wan22Trainer:
             if action.shape[1] % (num_video_frames - 1) != 0:
                 raise ValueError(f"`sample['action']` temporal dimension must be divisible by video frames-1={num_video_frames - 1}, got {action.shape[1]}")
             action_horizon = int(action.shape[1])
+        action_is_pad = (
+            batch_padding_mask(
+                "action_is_pad",
+                batch_size=video.shape[0],
+                length=action_horizon,
+            )
+            if action_horizon is not None
+            else None
+        )
 
         proprio = None
         if "proprio" in sample:
@@ -381,6 +410,8 @@ class Wan22Trainer:
             "context": context,
             "context_mask": context_mask,
             "action_horizon": action_horizon,
+            "image_is_pad": image_is_pad,
+            "action_is_pad": action_is_pad,
         }
 
     @torch.no_grad()
@@ -391,10 +422,31 @@ class Wan22Trainer:
         video0: torch.Tensor,
         pred_video_tensor: torch.Tensor,
         gt_video_tensor: torch.Tensor,
+        frame_is_pad: torch.Tensor | None = None,
     ) -> tuple[dict[str, float], torch.Tensor]:
+        metric_pred = pred_video_tensor
+        metric_gt = gt_video_tensor
+        if frame_is_pad is not None:
+            if (
+                frame_is_pad.ndim != 1
+                or frame_is_pad.shape[0] != gt_video_tensor.shape[1]
+            ):
+                raise ValueError(
+                    "`frame_is_pad` must have shape [T], got "
+                    f"{tuple(frame_is_pad.shape)} for T={gt_video_tensor.shape[1]}"
+                )
+            valid_frames = ~frame_is_pad.to(
+                device=gt_video_tensor.device,
+                dtype=torch.bool,
+            )
+            if not bool(valid_frames.any().item()):
+                raise ValueError("Evaluation sample has no valid video frames.")
+            metric_pred = pred_video_tensor[:, valid_frames]
+            metric_gt = gt_video_tensor[:, valid_frames]
+
         metrics = {
-            "psnr_rg": video_psnr(pred=pred_video_tensor, target=gt_video_tensor),
-            "ssim_rg": video_ssim(pred=pred_video_tensor, target=gt_video_tensor),
+            "psnr_rg": video_psnr(pred=metric_pred, target=metric_gt),
+            "ssim_rg": video_ssim(pred=metric_pred, target=metric_gt),
         }
         panels = [pred_video_tensor]
 
@@ -406,6 +458,11 @@ class Wan22Trainer:
             vae_latents = model._encode_video_latents(gt_video_batch, tiled=False)
             vae_recon_video = model._decode_latents(vae_latents, tiled=False)
             vae_video_tensor = pil_frames_to_video_tensor(vae_recon_video)
+            metric_vae = (
+                vae_video_tensor
+                if frame_is_pad is None
+                else vae_video_tensor[:, valid_frames]
+            )
 
             assert vae_video_tensor.shape == gt_video_tensor.shape, (
                 "Eval VAE reconstruction/GT shape mismatch: "
@@ -413,10 +470,10 @@ class Wan22Trainer:
             )
             metrics.update(
                 {
-                    "psnr_rd": video_psnr(pred=pred_video_tensor, target=vae_video_tensor),
-                    "ssim_rd": video_ssim(pred=pred_video_tensor, target=vae_video_tensor),
-                    "psnr_dg": video_psnr(pred=vae_video_tensor, target=gt_video_tensor),
-                    "ssim_dg": video_ssim(pred=vae_video_tensor, target=gt_video_tensor),
+                    "psnr_rd": video_psnr(pred=metric_pred, target=metric_vae),
+                    "ssim_rd": video_ssim(pred=metric_pred, target=metric_vae),
+                    "psnr_dg": video_psnr(pred=metric_vae, target=metric_gt),
+                    "ssim_dg": video_ssim(pred=metric_vae, target=metric_gt),
                 }
             )
             panels.append(vae_video_tensor)
@@ -538,6 +595,15 @@ class Wan22Trainer:
                     f"pred={tuple(pred_action_denorm.shape)} vs gt={tuple(gt_action_denorm.shape)}"
                 )
             action_diff = pred_action_denorm - gt_action_denorm
+            action_is_pad = sample["action_is_pad"]
+            if action_is_pad is not None:
+                valid_actions = ~action_is_pad.to(
+                    device=action_diff.device,
+                    dtype=torch.bool,
+                )
+                if not bool(valid_actions.any().item()):
+                    raise ValueError("Evaluation sample has no valid actions.")
+                action_diff = action_diff[valid_actions]
             action_l1 = action_diff.abs().mean().item()
             action_l2 = action_diff.pow(2).mean().item()
 
@@ -547,6 +613,11 @@ class Wan22Trainer:
             video0=video0,
             pred_video_tensor=pred_video_tensor,
             gt_video_tensor=gt_video_tensor,
+            frame_is_pad=(
+                None
+                if sample["image_is_pad"] is None
+                else sample["image_is_pad"][0]
+            ),
         )
         stitched_frames = []
         for t in range(stitched_video_tensor.shape[1]):
