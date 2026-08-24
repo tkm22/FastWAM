@@ -384,6 +384,9 @@ class FastWAMJointJiTPixel(FastWAMJoint):
         loss_video = self._masked_temporal_mse(
             pred_velocity, target_velocity, inputs["future_is_pad"]
         ).mean()
+        pred_x0_mse = self._masked_temporal_mse(
+            pred_x0, clean, inputs["future_is_pad"]
+        ).mean()
 
         action_loss_token = F.mse_loss(
             pred_action.float(), target_action.float(), reduction="none"
@@ -404,7 +407,7 @@ class FastWAMJointJiTPixel(FastWAMJoint):
         return loss_total, {
             "loss_video": self.loss_lambda_video * float(loss_video.detach()),
             "loss_action": self.loss_lambda_action * float(loss_action.detach()),
-            "pred_x0_mse": float(F.mse_loss(pred_x0.float(), clean.float()).detach()),
+            "pred_x0_mse": float(pred_x0_mse.detach()),
             "sigma_mean": float(sigma.mean().detach()),
         }
 
