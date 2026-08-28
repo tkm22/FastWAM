@@ -1,0 +1,154 @@
+task_file: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/tasks.txt
+EXP_NAME: 
+Evaluation results will be saved to: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134
+cp: 'evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/tasks.txt' and 'evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/tasks.txt' are the same file
+Task list file copied to: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/tasks.txt
+NUM_GPUS: 8, AVAILABLE_GPUS: 0,1,2,3,4,5,6,7
+CKPT: runs/asym_libero_joint_2cam224_1e-4/2026-07-30_03-19-48/checkpoints/weights/step_021700.pt
+CONFIG: libero_joint_2cam224_1e-4
+ROOT_DIR: /raid/kaiming/FastWAM
+NUM_GPUS: 8
+MAX_TASKS_PER_GPU: 2
+GPU load tracking initialized: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/gpu_load.txt
+Session 'libero_test_v3' has been deleted
+[2026-07-30 17:31:34] Starting dynamic task scheduling...
+[2026-07-30 17:31:34] Total tasks: 40
+[2026-07-30 17:31:34] Max tasks per GPU: 2
+[2026-07-30 17:31:34] Available GPUs: 0 1 2 3 4 5 6 7
+[2026-07-30 17:31:34] Starting the initial launch phase...
+[2026-07-30 17:31:34] Planning to launch up to 16 initial tasks
+[2026-07-30 17:31:34] Loaded 40 tasks
+[2026-07-30 17:31:34] Processing task: suite=libero_10, task_id=0
+[2026-07-30 17:31:34] Assigned task: libero_10 task_id=0 -> GPU0 (load: 1/2)
+[2026-07-30 17:31:34] Launching task: libero_10 task_id=0 on GPU0 pane 0.0
+[2026-07-30 17:31:34] Processing task: suite=libero_10, task_id=1
+[2026-07-30 17:31:34] Assigned task: libero_10 task_id=1 -> GPU1 (load: 1/2)
+[2026-07-30 17:31:34] Launching task: libero_10 task_id=1 on GPU1 pane 0.1
+[2026-07-30 17:31:35] Processing task: suite=libero_10, task_id=2
+[2026-07-30 17:31:35] Assigned task: libero_10 task_id=2 -> GPU2 (load: 1/2)
+[2026-07-30 17:31:35] Launching task: libero_10 task_id=2 on GPU2 pane 1.0
+[2026-07-30 17:31:35] Processing task: suite=libero_10, task_id=3
+[2026-07-30 17:31:35] Assigned task: libero_10 task_id=3 -> GPU3 (load: 1/2)
+[2026-07-30 17:31:35] Launching task: libero_10 task_id=3 on GPU3 pane 1.1
+[2026-07-30 17:31:36] Processing task: suite=libero_10, task_id=4
+[2026-07-30 17:31:36] Assigned task: libero_10 task_id=4 -> GPU4 (load: 1/2)
+[2026-07-30 17:31:36] Launching task: libero_10 task_id=4 on GPU4 pane 2.0
+[2026-07-30 17:31:37] Processing task: suite=libero_10, task_id=5
+[2026-07-30 17:31:37] Assigned task: libero_10 task_id=5 -> GPU5 (load: 1/2)
+[2026-07-30 17:31:37] Launching task: libero_10 task_id=5 on GPU5 pane 2.1
+[2026-07-30 17:31:37] Processing task: suite=libero_10, task_id=6
+[2026-07-30 17:31:37] Assigned task: libero_10 task_id=6 -> GPU6 (load: 1/2)
+[2026-07-30 17:31:37] Launching task: libero_10 task_id=6 on GPU6 pane 3.0
+[2026-07-30 17:31:38] Processing task: suite=libero_10, task_id=7
+[2026-07-30 17:31:38] Assigned task: libero_10 task_id=7 -> GPU7 (load: 1/2)
+[2026-07-30 17:31:38] Launching task: libero_10 task_id=7 on GPU7 pane 3.1
+[2026-07-30 17:31:38] Processing task: suite=libero_10, task_id=8
+[2026-07-30 17:31:38] Assigned task: libero_10 task_id=8 -> GPU0 (load: 2/2)
+[2026-07-30 17:31:38] Launching task: libero_10 task_id=8 on GPU0 pane 4.0
+[2026-07-30 17:31:39] Processing task: suite=libero_10, task_id=9
+[2026-07-30 17:31:39] Assigned task: libero_10 task_id=9 -> GPU1 (load: 2/2)
+[2026-07-30 17:31:39] Launching task: libero_10 task_id=9 on GPU1 pane 4.1
+[2026-07-30 17:31:39] Processing task: suite=libero_goal, task_id=0
+[2026-07-30 17:31:39] Assigned task: libero_goal task_id=0 -> GPU2 (load: 2/2)
+[2026-07-30 17:31:39] Launching task: libero_goal task_id=0 on GPU2 pane 5.0
+[2026-07-30 17:31:40] Processing task: suite=libero_goal, task_id=1
+[2026-07-30 17:31:40] Assigned task: libero_goal task_id=1 -> GPU3 (load: 2/2)
+[2026-07-30 17:31:40] Launching task: libero_goal task_id=1 on GPU3 pane 5.1
+[2026-07-30 17:31:40] Processing task: suite=libero_goal, task_id=2
+[2026-07-30 17:31:41] Assigned task: libero_goal task_id=2 -> GPU4 (load: 2/2)
+[2026-07-30 17:31:41] Launching task: libero_goal task_id=2 on GPU4 pane 6.0
+[2026-07-30 17:31:41] Processing task: suite=libero_goal, task_id=3
+[2026-07-30 17:31:41] Assigned task: libero_goal task_id=3 -> GPU5 (load: 2/2)
+[2026-07-30 17:31:41] Launching task: libero_goal task_id=3 on GPU5 pane 6.1
+[2026-07-30 17:31:42] Processing task: suite=libero_goal, task_id=4
+[2026-07-30 17:31:42] Assigned task: libero_goal task_id=4 -> GPU6 (load: 2/2)
+[2026-07-30 17:31:42] Launching task: libero_goal task_id=4 on GPU6 pane 7.0
+[2026-07-30 17:31:42] Processing task: suite=libero_goal, task_id=5
+[2026-07-30 17:31:42] Assigned task: libero_goal task_id=5 -> GPU7 (load: 2/2)
+[2026-07-30 17:31:42] Launching task: libero_goal task_id=5 on GPU7 pane 7.1
+[2026-07-30 17:31:43] Initial launch completed, started 16 tasks
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=0 rc=1 GPU0 (current load: 1/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=1 rc=1 GPU1 (current load: 1/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=2 rc=1 GPU2 (current load: 1/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=3 rc=1 GPU3 (current load: 1/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=4 rc=1 GPU4 (current load: 1/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=5 rc=1 GPU5 (current load: 1/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=6 rc=1 GPU6 (current load: 1/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=7 rc=1 GPU7 (current load: 1/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=8 rc=1 GPU0 (current load: 0/2)
+[2026-07-30 17:31:43] Task failed: libero_10 task_id=9 rc=1 GPU1 (current load: 0/2)
+[2026-07-30 17:31:43] Task failed: libero_goal task_id=0 rc=1 GPU2 (current load: 0/2)
+[2026-07-30 17:31:43] Task failed: libero_goal task_id=1 rc=1 GPU3 (current load: 0/2)
+[2026-07-30 17:31:43] Task failed: libero_goal task_id=2 rc=1 GPU4 (current load: 0/2)
+[2026-07-30 17:31:43] Task failed: libero_goal task_id=3 rc=1 GPU5 (current load: 0/2)
+Detected failed subtasks, stopping the scheduler. Failure details: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/failed_tasks.txt
+2026-07-30 17:31:43,libero_10,0,gpu=0,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task0_gpu0.log
+2026-07-30 17:31:43,libero_10,1,gpu=1,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task1_gpu1.log
+2026-07-30 17:31:43,libero_10,2,gpu=2,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task2_gpu2.log
+2026-07-30 17:31:43,libero_10,3,gpu=3,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task3_gpu3.log
+2026-07-30 17:31:43,libero_10,4,gpu=4,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task4_gpu4.log
+2026-07-30 17:31:43,libero_10,5,gpu=5,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task5_gpu5.log
+2026-07-30 17:31:43,libero_10,6,gpu=6,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task6_gpu6.log
+2026-07-30 17:31:43,libero_10,7,gpu=7,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task7_gpu7.log
+2026-07-30 17:31:43,libero_10,8,gpu=0,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task8_gpu0.log
+2026-07-30 17:31:43,libero_10,9,gpu=1,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task9_gpu1.log
+2026-07-30 17:31:43,libero_goal,0,gpu=2,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_goal_task0_gpu2.log
+2026-07-30 17:31:43,libero_goal,1,gpu=3,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_goal_task1_gpu3.log
+2026-07-30 17:31:43,libero_goal,2,gpu=4,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_goal_task2_gpu4.log
+2026-07-30 17:31:43,libero_goal,3,gpu=5,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_goal_task3_gpu5.log
+[info] using task orders [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+libero_10:
+- Number of tasks: 10
+[info] using task orders [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+libero_goal:
+- Number of tasks: 10
+[info] using task orders [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+libero_spatial:
+- Number of tasks: 10
+[info] using task orders [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+libero_object:
+- Number of tasks: 10
+
+Task list created: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/tasks.txt
+Total tasks: 40
+
+Starting evaluation (Hydra manager)...
+task: libero_joint_2cam224_1e-4
+Checkpoint: runs/asym_libero_joint_2cam224_1e-4/2026-07-30_03-19-48/checkpoints/weights/step_021700.pt
+Number of GPUs: 8
+Trials per task: 50
+Max tasks per GPU: 2
+Output directory: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134
+Forwarded overrides: EVALUATION.dataset_stats_path=runs/asym_libero_joint_2cam224_1e-4/2026-07-30_03-19-48/dataset_stats.json
+Evaluation script failed with return code: 2
+Failed subtask list: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/failed_tasks.txt
+2026-07-30 17:31:43,libero_10,0,gpu=0,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task0_gpu0.log
+2026-07-30 17:31:43,libero_10,1,gpu=1,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task1_gpu1.log
+2026-07-30 17:31:43,libero_10,2,gpu=2,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task2_gpu2.log
+2026-07-30 17:31:43,libero_10,3,gpu=3,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task3_gpu3.log
+2026-07-30 17:31:43,libero_10,4,gpu=4,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task4_gpu4.log
+2026-07-30 17:31:43,libero_10,5,gpu=5,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task5_gpu5.log
+2026-07-30 17:31:43,libero_10,6,gpu=6,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task6_gpu6.log
+2026-07-30 17:31:43,libero_10,7,gpu=7,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task7_gpu7.log
+2026-07-30 17:31:43,libero_10,8,gpu=0,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task8_gpu0.log
+2026-07-30 17:31:43,libero_10,9,gpu=1,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_10_task9_gpu1.log
+2026-07-30 17:31:43,libero_goal,0,gpu=2,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_goal_task0_gpu2.log
+2026-07-30 17:31:43,libero_goal,1,gpu=3,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_goal_task1_gpu3.log
+2026-07-30 17:31:43,libero_goal,2,gpu=4,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_goal_task2_gpu4.log
+2026-07-30 17:31:43,libero_goal,3,gpu=5,rc=1,log=evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/task_logs/libero_goal_task3_gpu5.log
+
+Error executing job with overrides: ['task=libero_joint_2cam224_1e-4', 'ckpt=runs/asym_libero_joint_2cam224_1e-4/2026-07-30_03-19-48/checkpoints/weights/step_021700.pt', 'EVALUATION.dataset_stats_path=runs/asym_libero_joint_2cam224_1e-4/2026-07-30_03-19-48/dataset_stats.json']
+Traceback (most recent call last):
+  File "/raid/kaiming/FastWAM/experiments/libero/run_libero_manager.py", line 150, in main
+    run_evaluation(
+  File "/raid/kaiming/FastWAM/experiments/libero/run_libero_manager.py", line 108, in run_evaluation
+    subprocess.run(
+  File "/home/admin/miniconda3/envs/fastwam/lib/python3.10/subprocess.py", line 526, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['bash', 'experiments/libero/run_libero_parallel_test.sh', 'evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_173134/tasks.txt']' returned non-zero exit status 2.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.

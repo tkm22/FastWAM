@@ -1,0 +1,322 @@
+{
+    "run_id": "2026-08-19_084450_vr_lpips_Aall_step_021700_raw_8gpu4worker_20260819_181945",
+    "ckpt": "/raid/kaiming/FastWAM/runs/asym_libero_joint_2cam224_1e-4/2026-08-19_084450_vr_lpips_Aall/checkpoints/weights/step_021700.pt",
+    "config": "libero_joint_2cam224_1e-4",
+    "suite_stats": {
+        "libero_spatial": {
+            "total_tasks": 10,
+            "total_trials": 500,
+            "total_successes": 497,
+            "total_time": 11199.422996997833,
+            "max_time": 1371.6914763450623
+        },
+        "libero_object": {
+            "total_tasks": 10,
+            "total_trials": 500,
+            "total_successes": 499,
+            "total_time": 9029.66439652443,
+            "max_time": 1217.4251070022583
+        },
+        "libero_goal": {
+            "total_tasks": 10,
+            "total_trials": 500,
+            "total_successes": 486,
+            "total_time": 11022.434413433075,
+            "max_time": 1542.2167057991028
+        },
+        "libero_10": {
+            "total_tasks": 10,
+            "total_trials": 500,
+            "total_successes": 472,
+            "total_time": 18147.536615371704,
+            "max_time": 2694.2621166706085
+        }
+    },
+    "task_results": {
+        "libero_spatial_0": {
+            "success_rate": 100.0,
+            "duration": 902.7689480781555,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the black bowl between the plate and the ramekin and place it on the plate"
+        },
+        "libero_spatial_3": {
+            "success_rate": 100.0,
+            "duration": 995.1141042709351,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the black bowl on the cookie box and place it on the plate"
+        },
+        "libero_spatial_5": {
+            "success_rate": 100.0,
+            "duration": 1038.7872762680054,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the black bowl on the ramekin and place it on the plate"
+        },
+        "libero_spatial_8": {
+            "success_rate": 100.0,
+            "duration": 1048.1944744586945,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the black bowl next to the plate and place it on the plate"
+        },
+        "libero_spatial_2": {
+            "success_rate": 98.0,
+            "duration": 1076.7509536743164,
+            "total_episodes": 50,
+            "successes": 49,
+            "task_description": "pick up the black bowl from table center and place it on the plate"
+        },
+        "libero_spatial_6": {
+            "success_rate": 100.0,
+            "duration": 1105.4789686203003,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the black bowl next to the cookie box and place it on the plate"
+        },
+        "libero_spatial_1": {
+            "success_rate": 100.0,
+            "duration": 1182.6322886943817,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the black bowl next to the ramekin and place it on the plate"
+        },
+        "libero_spatial_9": {
+            "success_rate": 100.0,
+            "duration": 1221.8793439865112,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the black bowl on the wooden cabinet and place it on the plate"
+        },
+        "libero_spatial_7": {
+            "success_rate": 100.0,
+            "duration": 1256.125162601471,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the black bowl on the stove and place it on the plate"
+        },
+        "libero_spatial_4": {
+            "success_rate": 96.0,
+            "duration": 1371.6914763450623,
+            "total_episodes": 50,
+            "successes": 48,
+            "task_description": "pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate"
+        },
+        "libero_object_1": {
+            "success_rate": 100.0,
+            "duration": 1127.2182610034943,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the cream cheese and place it in the basket"
+        },
+        "libero_object_0": {
+            "success_rate": 98.0,
+            "duration": 1217.4251070022583,
+            "total_episodes": 50,
+            "successes": 49,
+            "task_description": "pick up the alphabet soup and place it in the basket"
+        },
+        "libero_object_3": {
+            "success_rate": 100.0,
+            "duration": 745.3926632404327,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the bbq sauce and place it in the basket"
+        },
+        "libero_object_5": {
+            "success_rate": 100.0,
+            "duration": 780.3236413002014,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the tomato sauce and place it in the basket"
+        },
+        "libero_object_6": {
+            "success_rate": 100.0,
+            "duration": 809.6153314113617,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the butter and place it in the basket"
+        },
+        "libero_object_4": {
+            "success_rate": 100.0,
+            "duration": 833.5900580883026,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the ketchup and place it in the basket"
+        },
+        "libero_object_8": {
+            "success_rate": 100.0,
+            "duration": 784.5702373981476,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the chocolate pudding and place it in the basket"
+        },
+        "libero_object_2": {
+            "success_rate": 100.0,
+            "duration": 944.2130270004272,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the salad dressing and place it in the basket"
+        },
+        "libero_object_7": {
+            "success_rate": 100.0,
+            "duration": 892.814361333847,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the milk and place it in the basket"
+        },
+        "libero_object_9": {
+            "success_rate": 100.0,
+            "duration": 894.5017087459564,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "pick up the orange juice and place it in the basket"
+        },
+        "libero_goal_7": {
+            "success_rate": 98.0,
+            "duration": 874.9868896007538,
+            "total_episodes": 50,
+            "successes": 49,
+            "task_description": "turn on the stove"
+        },
+        "libero_goal_8": {
+            "success_rate": 100.0,
+            "duration": 877.880247592926,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "put the bowl on the plate"
+        },
+        "libero_goal_1": {
+            "success_rate": 100.0,
+            "duration": 908.1778733730316,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "put the bowl on the stove"
+        },
+        "libero_goal_4": {
+            "success_rate": 100.0,
+            "duration": 927.2601523399353,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "put the bowl on top of the cabinet"
+        },
+        "libero_goal_6": {
+            "success_rate": 100.0,
+            "duration": 990.5708842277527,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "put the cream cheese in the bowl"
+        },
+        "libero_goal_2": {
+            "success_rate": 88.0,
+            "duration": 1143.3542068004608,
+            "total_episodes": 50,
+            "successes": 44,
+            "task_description": "put the wine bottle on top of the cabinet"
+        },
+        "libero_goal_0": {
+            "success_rate": 100.0,
+            "duration": 1156.6365253925323,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "open the middle drawer of the cabinet"
+        },
+        "libero_goal_9": {
+            "success_rate": 100.0,
+            "duration": 1260.0462934970856,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "put the wine bottle on the rack"
+        },
+        "libero_goal_5": {
+            "success_rate": 94.0,
+            "duration": 1341.304634809494,
+            "total_episodes": 50,
+            "successes": 47,
+            "task_description": "push the plate to the front of the stove"
+        },
+        "libero_goal_3": {
+            "success_rate": 92.0,
+            "duration": 1542.2167057991028,
+            "total_episodes": 50,
+            "successes": 46,
+            "task_description": "open the top drawer and put the bowl inside"
+        },
+        "libero_10_5": {
+            "success_rate": 96.0,
+            "duration": 1386.5824356079102,
+            "total_episodes": 50,
+            "successes": 48,
+            "task_description": "pick up the book and place it in the back compartment of the caddy"
+        },
+        "libero_10_3": {
+            "success_rate": 98.0,
+            "duration": 1554.0108623504639,
+            "total_episodes": 50,
+            "successes": 49,
+            "task_description": "put the black bowl in the bottom drawer of the cabinet and close it"
+        },
+        "libero_10_4": {
+            "success_rate": 94.0,
+            "duration": 1619.4287881851196,
+            "total_episodes": 50,
+            "successes": 47,
+            "task_description": "put the white mug on the left plate and put the yellow and white mug on the right plate"
+        },
+        "libero_10_2": {
+            "success_rate": 96.0,
+            "duration": 1633.4860286712646,
+            "total_episodes": 50,
+            "successes": 48,
+            "task_description": "turn on the stove and put the moka pot on it"
+        },
+        "libero_10_7": {
+            "success_rate": 100.0,
+            "duration": 1631.7269351482391,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "put both the alphabet soup and the cream cheese box in the basket"
+        },
+        "libero_10_6": {
+            "success_rate": 96.0,
+            "duration": 1858.1164846420288,
+            "total_episodes": 50,
+            "successes": 48,
+            "task_description": "put the white mug on the plate and put the chocolate pudding to the right of the plate"
+        },
+        "libero_10_1": {
+            "success_rate": 100.0,
+            "duration": 1861.367244720459,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "put both the cream cheese box and the butter in the basket"
+        },
+        "libero_10_0": {
+            "success_rate": 100.0,
+            "duration": 1940.4595909118652,
+            "total_episodes": 50,
+            "successes": 50,
+            "task_description": "put both the alphabet soup and the tomato sauce in the basket"
+        },
+        "libero_10_9": {
+            "success_rate": 94.0,
+            "duration": 1968.0961284637451,
+            "total_episodes": 50,
+            "successes": 47,
+            "task_description": "put the yellow and white mug in the microwave and close it"
+        },
+        "libero_10_8": {
+            "success_rate": 70.0,
+            "duration": 2694.2621166706085,
+            "total_episodes": 50,
+            "successes": 35,
+            "task_description": "put both moka pots on the stove"
+        }
+    },
+    "overall": {
+        "average_success_rate": 97.69999999999999,
+        "total_time": 49399.05842232704,
+        "average_task_time": 1234.976460558176
+    }
+}

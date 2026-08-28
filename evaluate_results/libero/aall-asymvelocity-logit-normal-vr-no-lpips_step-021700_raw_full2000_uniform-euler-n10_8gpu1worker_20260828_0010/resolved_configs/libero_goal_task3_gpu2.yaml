@@ -1,0 +1,249 @@
+output_dir: ./runs/train/2026-08-28_00-37-10
+batch_size: 16
+num_workers: 8
+lr_scheduler_type: cosine
+learning_rate: 0.0001
+num_epochs: 10
+max_steps: null
+log_every: 10
+save_every: 2000
+eval_every: 200
+eval_num_inference_steps: 10
+gradient_accumulation_steps: 1
+mixed_precision: bf16
+seed: 42
+max_grad_norm: 1.0
+weight_decay: 0.01
+resume: null
+wandb:
+  enabled: false
+  workspace: null
+  project: fast-wam
+  name: train
+  group: null
+  mode: online
+data:
+  train:
+    _target_: fastwam.datasets.lerobot.robot_video_dataset.RobotVideoDataset
+    dataset_dirs:
+    - ./data/libero_mujoco3.3.2/libero_spatial_no_noops_lerobot
+    - ./data/libero_mujoco3.3.2/libero_object_no_noops_lerobot
+    - ./data/libero_mujoco3.3.2/libero_goal_no_noops_lerobot
+    - ./data/libero_mujoco3.3.2/libero_10_no_noops_lerobot
+    shape_meta:
+      images:
+      - key: image
+        raw_shape:
+        - 3
+        - 512
+        - 512
+        shape:
+        - 3
+        - 224
+        - 224
+      - key: wrist_image
+        raw_shape:
+        - 3
+        - 512
+        - 512
+        shape:
+        - 3
+        - 224
+        - 224
+      action:
+      - key: default
+        raw_shape: 7
+        shape: 7
+      state:
+      - key: default
+        raw_shape: 8
+        shape: 8
+    num_frames: 33
+    global_sample_stride: 1
+    action_video_freq_ratio: 4
+    video_size:
+    - 224
+    - 448
+    camera_key: null
+    val_set_proportion: 0.0
+    is_training_set: true
+    skip_padding_as_possible: false
+    concat_multi_camera: horizontal
+    processor:
+      _target_: fastwam.datasets.lerobot.processors.fastwam_processor.FastWAMProcessor
+      shape_meta:
+        images:
+        - key: image
+          raw_shape:
+          - 3
+          - 512
+          - 512
+          shape:
+          - 3
+          - 224
+          - 224
+        - key: wrist_image
+          raw_shape:
+          - 3
+          - 512
+          - 512
+          shape:
+          - 3
+          - 224
+          - 224
+        action:
+        - key: default
+          raw_shape: 7
+          shape: 7
+        state:
+        - key: default
+          raw_shape: 8
+          shape: 8
+      num_obs_steps: 33
+      num_output_cameras: 2
+      action_output_dim: 7
+      proprio_output_dim: 8
+      delta_action_dim_mask:
+        default:
+        - true
+        - true
+        - true
+        - true
+        - true
+        - true
+        - false
+      action_state_transforms: null
+      use_stepwise_action_norm: false
+      norm_default_mode: min/max
+      norm_exception_mode: null
+      action_state_merger:
+        _target_: fastwam.datasets.lerobot.transforms.action_state_merger.ConcatLeftAlign
+      train_transforms:
+      - _target_: fastwam.datasets.lerobot.transforms.image.ToTensor
+      - _target_: torchvision.transforms.Resize
+        size:
+        - 224
+        - 224
+      val_transforms:
+      - _target_: fastwam.datasets.lerobot.transforms.image.ToTensor
+      - _target_: torchvision.transforms.Resize
+        size:
+        - 224
+        - 224
+    text_embedding_cache_dir: ./data/text_embeds_cache/libero
+    context_len: 128
+model:
+  _target_: fastwam.runtime.create_fastwam_joint
+  model_id: Wan-AI/Wan2.2-TI2V-5B
+  tokenizer_model_id: Wan-AI/Wan2.1-T2V-1.3B
+  tokenizer_max_len: 128
+  load_text_encoder: true
+  proprio_dim: 8
+  redirect_common_files: true
+  mot_checkpoint_mixed_attn: false
+  action_dit_pretrained_path: null
+  skip_dit_load_from_pretrain: true
+  projection_artifact_path: /raid/kaiming/FastWAM/artifacts/2026-08-18_stride4_all222929.pt
+  video_dit_config:
+    has_image_input: false
+    patch_size:
+    - 1
+    - 2
+    - 2
+    in_dim: 48
+    hidden_dim: 3072
+    ffn_dim: 14336
+    freq_dim: 256
+    text_dim: 4096
+    out_dim: 48
+    num_heads: 24
+    attn_head_dim: 128
+    num_layers: 30
+    eps: 1.0e-06
+    seperated_timestep: true
+    require_clip_embedding: false
+    require_vae_embedding: false
+    fuse_vae_embedding_in_latents: true
+    use_gradient_checkpointing: false
+    inference_sigma_min: 0.0001
+    video_attention_mask_mode: first_frame_causal
+    action_conditioned: false
+    action_dim: 7
+    action_group_causal_mask_mode: group_diagonal
+  action_dit_config:
+    action_dim: 7
+    hidden_dim: 1024
+    ffn_dim: 4096
+    num_heads: 24
+    attn_head_dim: 128
+    num_layers: 30
+    text_dim: 4096
+    freq_dim: 256
+    eps: 1.0e-06
+    use_gradient_checkpointing: false
+  video_scheduler:
+    train_shift: 5.0
+    infer_shift: 5.0
+    num_train_timesteps: 1000
+  action_scheduler:
+    train_shift: 5.0
+    infer_shift: 5.0
+    num_train_timesteps: 1000
+  loss:
+    lambda_action: 1.0
+  asymflow:
+    enabled: true
+    prediction_type: asym_velocity
+    vr_enabled: true
+    vae_path: checkpoints/DiffSynth-Studio/Wan-Series-Converted-Safetensors/Wan2.2_VAE.safetensors
+    loss_shift: 0.3
+    sigma_min: 0.05
+    timestep_sampling: logit_normal
+    timestep_shift: 17.0
+    lpips_enabled: false
+    lpips_loss_weight: 0.0
+    clamp_denoised: true
+ckpt: /raid/kaiming/FastWAM/runs/asym_libero_joint_2cam224_1e-4/2026-08-26_s4_Aall_LN_VRonly_EMA_LPIPSoff_seed42_10ep/checkpoints/weights/step_021700.pt
+gpu_id: 2
+EVALUATION:
+  task_suite_name: libero_goal
+  task_id: 3
+  num_trials: 50
+  trial_indices: null
+  output_dir: /raid/kaiming/FastWAM/evaluate_results/libero/aall-asymvelocity-logit-normal-vr-no-lpips_step-021700_raw_full2000_uniform-euler-n10_8gpu1worker_20260828_0010
+  env_num: 1
+  num_steps_wait: 30
+  replan_steps: 10
+  binarize_gripper: true
+  use_action_ensembler: false
+  visualize_future_video: false
+  save_rollout_videos: false
+  save_prediction_clip_videos: false
+  action_horizon: null
+  num_inference_steps: 10
+  sigma_shift: null
+  inference_schedule: uniform
+  inference_schedule_shift: null
+  ode_solver: euler
+  text_cfg_scale: 1.0
+  negative_prompt: ''
+  rand_device: cpu
+  tiled: false
+  compute_lpips: false
+  lpips_net: vgg
+  metrics_exclude_conditioning_frame: true
+  compute_gfvd: false
+  fvd_detector_path: checkpoints/metrics/i3d_torchscript.pt
+  gfvd_num_frames: 16
+  dataset_stats_path: /raid/kaiming/FastWAM/runs/asym_libero_joint_2cam224_1e-4/2026-08-26_s4_Aall_LN_VRonly_EMA_LPIPSoff_seed42_10ep/dataset_stats.json
+  device: cuda
+MULTIRUN:
+  create_only: false
+  task_file: null
+  task_suite_names:
+  - libero_10
+  - libero_goal
+  - libero_spatial
+  - libero_object
+  num_gpus: 8
+  max_tasks_per_gpu: 2

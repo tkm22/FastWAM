@@ -1,0 +1,47 @@
+{
+  "updated_at": "2026-08-28 12:56:48",
+  "protocol": {
+    "checkpoint_type": "raw",
+    "seed": 42,
+    "task_suites": [
+      "libero_10",
+      "libero_goal",
+      "libero_spatial",
+      "libero_object"
+    ],
+    "tasks_per_suite": 10,
+    "trial_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "trials_per_task": 10,
+    "episodes_per_cell": 400,
+    "schedules": [
+      "uniform",
+      "logit_normal"
+    ],
+    "solvers": [
+      "euler",
+      "heun",
+      "midpoint"
+    ],
+    "steps": 10,
+    "visualize_future_video": true,
+    "save_rollout_videos": true,
+    "save_prediction_clip_videos": false,
+    "workers_per_gpu": 1
+  },
+  "expected_cells": 6,
+  "completed_cells": 0,
+  "expected_episodes": 2400,
+  "completed_episodes": 0,
+  "rows": []
+}

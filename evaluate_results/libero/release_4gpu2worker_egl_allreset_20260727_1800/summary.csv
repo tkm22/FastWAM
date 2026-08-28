@@ -1,0 +1,5 @@
+libero_uncond_2cam224.pt
+,libero_spatial,libero_object,libero_goal,libero_10,Overall
+Success Rate (%),97.60,99.40,95.60,95.00,96.90
+Average Time (s),576.11,549.31,544.58,957.88,656.97
+Max Time (s),688.07,587.49,859.90,1268.94,1268.94

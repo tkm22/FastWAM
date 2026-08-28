@@ -1,0 +1,5 @@
+step_021700.pt
+,libero_spatial,libero_object,libero_goal,libero_10,Overall
+Success Rate (%),97.60,99.00,95.60,92.80,96.25
+Average Time (s),577.26,548.67,550.91,1014.99,672.96
+Max Time (s),669.30,603.24,780.75,1342.23,1342.23

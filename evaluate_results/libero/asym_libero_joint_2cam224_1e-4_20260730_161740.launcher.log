@@ -1,0 +1,55 @@
+task_file: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_161741/tasks.txt
+EXP_NAME: 
+Evaluation results will be saved to: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_161741
+cp: 'evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_161741/tasks.txt' and 'evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_161741/tasks.txt' are the same file
+Task list file copied to: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_161741/tasks.txt
+NUM_GPUS: 8, AVAILABLE_GPUS: 0,1,2,3,4,5,6,7
+CKPT: runs/asym_libero_joint_2cam224_1e-4/2026-07-30_03-19-48/checkpoints/weights/step_021700.pt
+CONFIG: libero_joint_2cam224_1e-4
+ROOT_DIR: /raid/kaiming/FastWAM
+NUM_GPUS: 8
+MAX_TASKS_PER_GPU: 2
+GPU load tracking initialized: evaluate_results/libero/libero_joint_2cam224_1e-4/20260730_161741/gpu_load.txt
+[2026-07-30 16:17:41] Starting dynamic task scheduling...
+[2026-07-30 16:17:41] Total tasks: 40
+[2026-07-30 16:17:41] Max tasks per GPU: 2
+[2026-07-30 16:17:41] Available GPUs: 0 1 2 3 4 5 6 7
+[2026-07-30 16:17:41] Starting the initial launch phase...
+[2026-07-30 16:17:41] Planning to launch up to 16 initial tasks
+[2026-07-30 16:17:41] Loaded 40 tasks
+[2026-07-30 16:17:41] Processing task: suite=libero_10, task_id=0
+[2026-07-30 16:17:41] Assigned task: libero_10 task_id=0 -> GPU0 (load: 1/2)
+[2026-07-30 16:17:42] Launching task: libero_10 task_id=0 on GPU0 pane 0.0
+[2026-07-30 16:17:42] Processing task: suite=libero_10, task_id=1
+[2026-07-30 16:17:42] Assigned task: libero_10 task_id=1 -> GPU1 (load: 1/2)
+[2026-07-30 16:17:42] Launching task: libero_10 task_id=1 on GPU1 pane 0.1
+[2026-07-30 16:17:43] Processing task: suite=libero_10, task_id=2
+[2026-07-30 16:17:43] Assigned task: libero_10 task_id=2 -> GPU2 (load: 1/2)
+[2026-07-30 16:17:43] Launching task: libero_10 task_id=2 on GPU2 pane 1.0
+[2026-07-30 16:17:43] Processing task: suite=libero_10, task_id=3
+[2026-07-30 16:17:43] Assigned task: libero_10 task_id=3 -> GPU3 (load: 1/2)
+[2026-07-30 16:17:43] Launching task: libero_10 task_id=3 on GPU3 pane 1.1
+[2026-07-30 16:17:44] Processing task: suite=libero_10, task_id=4
+[2026-07-30 16:17:44] Assigned task: libero_10 task_id=4 -> GPU4 (load: 1/2)
+[2026-07-30 16:17:44] Launching task: libero_10 task_id=4 on GPU4 pane 2.0
+[2026-07-30 16:17:44] Processing task: suite=libero_10, task_id=5
+[2026-07-30 16:17:44] Assigned task: libero_10 task_id=5 -> GPU5 (load: 1/2)
+[2026-07-30 16:17:44] Launching task: libero_10 task_id=5 on GPU5 pane 2.1
+[2026-07-30 16:17:45] Processing task: suite=libero_10, task_id=6
+[2026-07-30 16:17:45] Assigned task: libero_10 task_id=6 -> GPU6 (load: 1/2)
+[2026-07-30 16:17:45] Launching task: libero_10 task_id=6 on GPU6 pane 3.0
+[2026-07-30 16:17:45] Processing task: suite=libero_10, task_id=7
+[2026-07-30 16:17:45] Assigned task: libero_10 task_id=7 -> GPU7 (load: 1/2)
+[2026-07-30 16:17:45] Launching task: libero_10 task_id=7 on GPU7 pane 3.1
+[2026-07-30 16:17:46] Processing task: suite=libero_10, task_id=8
+[2026-07-30 16:17:46] Assigned task: libero_10 task_id=8 -> GPU0 (load: 2/2)
+[2026-07-30 16:17:46] Launching task: libero_10 task_id=8 on GPU0 pane 4.0
+[2026-07-30 16:17:46] Processing task: suite=libero_10, task_id=9
+[2026-07-30 16:17:47] Assigned task: libero_10 task_id=9 -> GPU1 (load: 2/2)
+[2026-07-30 16:17:47] Launching task: libero_10 task_id=9 on GPU1 pane 4.1
+[2026-07-30 16:17:47] Processing task: suite=libero_goal, task_id=0
+[2026-07-30 16:17:47] Assigned task: libero_goal task_id=0 -> GPU2 (load: 2/2)
+[2026-07-30 16:17:47] Launching task: libero_goal task_id=0 on GPU2 pane 5.0
+[2026-07-30 16:17:48] Processing task: suite=libero_goal, task_id=1
+[2026-07-30 16:17:48] Assigned task: libero_goal task_id=1 -> GPU3 (load: 2/2)
+[2026-07-30 16:17:48] Launching task: libero_goal task_id=1 on GPU3 pane 5.1
