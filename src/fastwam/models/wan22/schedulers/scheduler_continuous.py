@@ -66,6 +66,8 @@ class WanContinuousFlowMatchScheduler:
         device: torch.device,
         dtype: torch.dtype,
         shift_override: float | None = None,
+        schedule: str = "uniform",
+        logit_normal_shift: float | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if num_inference_steps <= 0:
             raise ValueError(f"`num_inference_steps` must be positive, got {num_inference_steps}")
@@ -73,7 +75,50 @@ class WanContinuousFlowMatchScheduler:
         if shift <= 0:
             raise ValueError(f"`shift` must be positive, got {shift}")
 
-        u_steps = torch.linspace(1.0, 0.0, num_inference_steps + 1, device=device, dtype=torch.float32)
+        schedule = str(schedule).strip().lower()
+        if schedule in {"uniform", "scheduler_uniform"}:
+            # Historical FastWAM schedule: uniformly space the pre-shift
+            # coordinate, then apply the scheduler's rational time shift.
+            u_steps = torch.linspace(
+                1.0,
+                0.0,
+                num_inference_steps + 1,
+                device=device,
+                dtype=torch.float32,
+            )
+        elif schedule in {"logit_normal", "lognormal"}:
+            # Deterministic descending quantiles of the training distribution
+            # u=sigmoid(N(0,1)).  Keep the exact sigma=1/0 ODE endpoints while
+            # using distribution-matched interior nodes.
+            quantiles = torch.linspace(
+                1.0,
+                0.0,
+                num_inference_steps + 1,
+                device=device,
+                dtype=torch.float32,
+            )
+            finfo = torch.finfo(quantiles.dtype)
+            normal = torch.distributions.Normal(
+                torch.tensor(0.0, device=device),
+                torch.tensor(1.0, device=device),
+            )
+            logits = normal.icdf(quantiles.clamp(finfo.eps, 1.0 - finfo.eps))
+            u_steps = torch.sigmoid(logits)
+            u_steps[0] = 1.0
+            u_steps[-1] = 0.0
+            if logit_normal_shift is not None:
+                shift = float(logit_normal_shift)
+                if shift <= 0:
+                    raise ValueError(
+                        "`logit_normal_shift` must be positive, got "
+                        f"{logit_normal_shift}"
+                    )
+        else:
+            raise ValueError(
+                f"Unsupported inference schedule {schedule!r}; expected "
+                "'uniform' or 'logit_normal'"
+            )
+
         sigma_steps = self._phi(u_steps, shift)
         timesteps = sigma_steps[:-1] * float(self.num_train_timesteps)
         deltas = sigma_steps[1:] - sigma_steps[:-1]

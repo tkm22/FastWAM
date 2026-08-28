@@ -5,7 +5,11 @@ import math
 from typing import Any, Dict, Tuple, Optional
 from einops import rearrange
 
-from asymflow.velocity import asymflow_calibration, asymflow_velocity
+from asymflow.velocity import (
+    asymflow_calibration,
+    asymflow_velocity,
+    x0_prediction_velocity,
+)
 from asymflow.video_packing import (
     patchify_future_tubes,
     unpatchify_future_tubes,
@@ -353,6 +357,8 @@ class WanVideoDiT(torch.nn.Module):
         video_attention_mask_mode: str = "bidirectional",
         use_gradient_checkpointing: bool = False,
         inference_sigma_min: float = 1e-4,
+        prediction_type: str = "asym_velocity",
+        x_prediction_eps: float = 5e-2,
         projection_artifact: Optional[Dict[str, Any]] = None,
     ):
         """Construct the pretrained Wan Transformer body with pixel I/O.
@@ -383,6 +389,7 @@ class WanVideoDiT(torch.nn.Module):
                 "`inference_sigma_min` must be positive, got "
                 f"{self.inference_sigma_min}"
             )
+        self.set_prediction_type(prediction_type, x_prediction_eps)
 
         if num_heads <= 0:
             raise ValueError(f"`num_heads` must be > 0, got {num_heads}")
@@ -488,6 +495,31 @@ class WanVideoDiT(torch.nn.Module):
             ).reshape(()),
         )
         self.flow_num_train_timesteps = 1000
+
+    def set_prediction_type(
+        self, prediction_type: str, x_prediction_eps: float = 5e-2
+    ) -> None:
+        """Select video-head semantics while preserving the velocity API."""
+        key = str(prediction_type).strip().lower().replace("-", "_")
+        aliases = {
+            "asym_v": "asym_velocity",
+            "u_a": "asym_velocity",
+            "x": "x0",
+            "x_pred": "x0",
+            "x_prediction": "x0",
+        }
+        key = aliases.get(key, key)
+        if key not in {"asym_velocity", "x0"}:
+            raise ValueError(
+                f"Unsupported pixel prediction type {prediction_type!r}; expected "
+                "'asym_velocity' or 'x0'"
+            )
+        if x_prediction_eps <= 0:
+            raise ValueError(
+                f"`x_prediction_eps` must be positive, got {x_prediction_eps}"
+            )
+        self.prediction_type = key
+        self.x_prediction_eps = float(x_prediction_eps)
 
     def _apply(self, fn):
         """Move the model while preserving AsymFlow calibration in FP32.
@@ -747,28 +779,38 @@ class WanVideoDiT(torch.nn.Module):
         }
 
     def post_dit(self, x_tokens: torch.Tensor, pre_state: Dict[str, Any]) -> torch.Tensor:
-        """Reconstruct full future-pixel velocity from the asymmetric head output.
+        """Return full future-pixel velocity for either supported head target.
 
-        The head skips the clean first-frame token group and emits one
-        12288-D calibrated value ``u_A = P eps - x0 / s`` for each future
-        tube.  ``asymflow_velocity`` applies ``P=A_future A_future.T``
-        implicitly and returns ordinary ``eps - x0`` tubes, which are then
-        unpacked to ``[B,3,4n,H,W]`` for the scheduler and video loss.
+        ``asym_velocity`` interprets each 12288-D tube as calibrated ``u_A``
+        and analytically recovers ``eps-x0``. ``x0`` interprets the same head
+        output as direct clean pixels and performs the JiT conversion
+        ``(x_sigma-x0_pred)/max(sigma, eps)``. Both modes therefore retain the
+        existing scheduler, VR/LPIPS, and joint video-action interfaces.
         """
         future_x = pre_state["meta"]["future_x"]
         if future_x is None:
             raise ValueError("pixel Wan has no velocity output for first-frame-only input")
         spatial = pre_state["meta"]["tokens_per_group"]
-        u_asym = self.head(x_tokens[:, spatial:], pre_state["t"][:, spatial:])
-        x_packed = patchify_future_tubes(future_x)
-        full_velocity = asymflow_velocity(
-            u_asym,
-            x_packed,
-            pre_state["meta"]["sigma"],
-            self.scale_future,
-            self.A_future,
-            sigma_min=1e-6 if self.training else self.inference_sigma_min,
+        head_output = self.head(
+            x_tokens[:, spatial:], pre_state["t"][:, spatial:]
         )
+        x_packed = patchify_future_tubes(future_x)
+        if self.prediction_type == "asym_velocity":
+            full_velocity = asymflow_velocity(
+                head_output,
+                x_packed,
+                pre_state["meta"]["sigma"],
+                self.scale_future,
+                self.A_future,
+                sigma_min=1e-6 if self.training else self.inference_sigma_min,
+            )
+        else:
+            full_velocity = x0_prediction_velocity(
+                x_packed,
+                head_output,
+                pre_state["meta"]["sigma"],
+                sigma_min=self.x_prediction_eps,
+            )
         return unpatchify_future_tubes(
             full_velocity,
             future_x.shape[2],

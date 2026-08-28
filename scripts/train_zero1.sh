@@ -5,6 +5,19 @@ NPROC_PER_NODE="${1:?Usage: bash scripts/train_zero1.sh <nproc_per_node> [hydra_
 shift
 
 EXTRA_ARGS=("$@")
+# Match the ZeRO-2 launcher: the login-shell `accelerate` on this host is a
+# system-Python wrapper, while training must use the FastWAM environment.
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+  PYTHON_BIN="${PYTHON_BIN}"
+elif [[ -x /home/admin/miniconda3/envs/fastwam/bin/python ]]; then
+  PYTHON_BIN=/home/admin/miniconda3/envs/fastwam/bin/python
+else
+  PYTHON_BIN=python
+fi
+if ! "${PYTHON_BIN}" -c 'import accelerate' >/dev/null 2>&1; then
+  echo "Error: ${PYTHON_BIN} cannot import accelerate. Set PYTHON_BIN to the FastWAM environment." >&2
+  exit 1
+fi
 NUM_MACHINES="${NNODES:-1}"
 MACHINE_RANK="${NODE_RANK:-0}"
 MAIN_PROCESS_IP="${MASTER_ADDR:-127.0.0.1}"
@@ -55,6 +68,12 @@ for ((i = 0; i < ${#EXTRA_ARGS[@]}; i++)); do
       ;;
   esac
 done
+
+# A task config describes data/model semantics.  Asym-FastWAM uses the same
+# LIBERO joint task config but must retain its own run and W&B namespace.
+if [[ -n "${RUN_TASK_BASENAME:-}" ]]; then
+  TASK_BASENAME="${RUN_TASK_BASENAME}"
+fi
 
 if [[ -z "${RUN_ID:-}" ]]; then
   if (( NUM_MACHINES <= 1 )); then
@@ -107,7 +126,7 @@ fi
 
 echo "[launch] nproc_per_node=${NPROC_PER_NODE} num_machines=${NUM_MACHINES} machine_rank=${MACHINE_RANK} run_id=${RUN_ID}"
 
-accelerate launch \
+"${PYTHON_BIN}" -m accelerate.commands.launch \
   --config_file scripts/accelerate_configs/accelerate_zero1_ds.yaml \
   --num_processes "${NPROC_PER_NODE}" \
   scripts/train.py \

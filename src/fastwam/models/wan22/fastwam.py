@@ -34,6 +34,37 @@ from .wan_video_vae import WanVideoVAE38
 logger = get_logger(__name__)
 
 
+def _normalize_ode_solver(ode_solver: str) -> str:
+    solver = str(ode_solver).strip().lower()
+    aliases = {
+        "explicit_euler": "euler",
+        "improved_euler": "heun",
+        "rk2_midpoint": "midpoint",
+    }
+    solver = aliases.get(solver, solver)
+    if solver not in {"euler", "heun", "midpoint"}:
+        raise ValueError(
+            f"Unsupported ODE solver {ode_solver!r}; expected one of "
+            "['euler', 'heun', 'midpoint']"
+        )
+    return solver
+
+
+def _num_model_evaluations(ode_solver: str, num_steps: int) -> int:
+    """Return the actual number of joint velocity evaluations."""
+    if ode_solver == "euler":
+        return num_steps
+    if ode_solver == "heun":
+        # The AsymFlow velocity recovery is singular at sigma=0, so the
+        # terminal interval uses Euler instead of evaluating the endpoint.
+        return 2 * num_steps - 1
+    return 2 * num_steps
+
+
+def _ode_endpoint_policy(ode_solver: str) -> Optional[str]:
+    return "terminal_euler" if ode_solver == "heun" else None
+
+
 def _load_frozen_wan_vae(path: str, device: torch.device, dtype: torch.dtype) -> WanVideoVAE38:
     """Build the training-only VAE used to produce AsymFlow's low-rank state."""
     checkpoint = Path(path)
@@ -134,6 +165,22 @@ class FastWAM(torch.nn.Module):
         self.asymflow = dict(asymflow or {})
         self.asymflow_enabled = bool(self.asymflow.get("enabled", False))
         self.asymflow_vr_enabled = bool(self.asymflow.get("vr_enabled", True))
+        self.video_prediction_type = str(
+            self.asymflow.get("prediction_type", "asym_velocity")
+        )
+        self.x_prediction_eps = float(self.asymflow.get("sigma_min", 5e-2))
+        set_prediction_type = getattr(
+            self.video_expert, "set_prediction_type", None
+        )
+        if callable(set_prediction_type):
+            set_prediction_type(
+                self.video_prediction_type, self.x_prediction_eps
+            )
+        elif self.video_prediction_type not in {"asym_velocity", "asym_v", "u_a"}:
+            raise TypeError(
+                "The configured video expert does not support selectable pixel "
+                "prediction types"
+            )
         self.load_training_auxiliaries = bool(load_training_auxiliaries)
         if (
             self.asymflow_enabled
@@ -483,8 +530,7 @@ class FastWAM(torch.nn.Module):
             squared_error = (squared_error * valid).sum(1) / valid.sum(1).clamp_min(1)
         else:
             squared_error = squared_error.mean(1)
-        mse_weight = float(self.asymflow.get("mse_loss_weight", 10.0))
-        mse_loss = 0.5 * mse_weight * (squared_error / sigma_clamped.square()).mean()
+        mse_loss = (squared_error / sigma_clamped.square()).mean()
 
         lpips_loss = pred_x0.new_zeros(())
         if lpips_enabled:
@@ -516,7 +562,7 @@ class FastWAM(torch.nn.Module):
             # elementwise, then take the ordinary mean.  Dividing by
             # ``weight.sum()`` would cancel the absolute timestep/VR weighting.
             lpips_loss = (spatial_loss * weight).mean()
-            lpips_loss = lpips_loss * float(self.asymflow.get("lpips_loss_weight", 1.0))
+            lpips_loss = lpips_loss * float(self.asymflow.get("lpips_loss_weight", 0.2))
 
         total = mse_loss + lpips_loss
         return total, {
@@ -648,11 +694,11 @@ class FastWAM(torch.nn.Module):
 
         The video scheduler noises only ``future_pixels``.  ``first_frame``
         stays clean and enters the video expert as a condition.  The video
-        head predicts an asymmetric velocity internally, but ``post_dit``
-        reconstructs the ordinary full velocity ``epsilon - x0`` before this
-        method compares it with the scheduler target.  Action flow matching,
-        padding masks, scheduler timestep weights, and the two lambda weights
-        retain FastWAM's original objective structure.
+        head predicts either calibrated asymmetric velocity or clean pixels;
+        ``post_dit`` converts both to ordinary full velocity ``epsilon-x0``
+        before this method compares it with the scheduler target. Action flow
+        matching, padding masks, scheduler timestep weights, and the two lambda
+        weights retain FastWAM's original objective structure.
         """
         inputs = self.build_inputs(sample, tiled)
         batch_size = inputs["future_pixels"].shape[0]
@@ -961,12 +1007,21 @@ class FastWAM(torch.nn.Module):
         if not bool(self.asymflow.get("clamp_denoised", True)):
             return velocity
         sigma = timestep.float() / float(self.infer_video_scheduler.num_train_timesteps)
+        if bool(torch.all(sigma <= 0)):
+            # Higher-order solvers evaluate at the clean endpoint, where the
+            # denoised-state callback's division by sigma is undefined.
+            return velocity
         sigma_view = sigma.view(-1, 1, 1, 1, 1)
         denoised = future_x.float() - sigma_view * velocity.float()
         rgb = self.color.decode(denoised).clamp(-1.0, 1.0)
         clamped_denoised = self.color.encode(rgb)
-        return ((future_x.float() - clamped_denoised) / sigma_view.clamp_min(1e-4)).to(
-            dtype=velocity.dtype
+        clamped_velocity = (
+            (future_x.float() - clamped_denoised) / sigma_view.clamp_min(1e-4)
+        ).to(dtype=velocity.dtype)
+        return torch.where(
+            (sigma_view > 0).to(device=velocity.device),
+            clamped_velocity,
+            velocity,
         )
 
     @torch.no_grad()
@@ -984,6 +1039,9 @@ class FastWAM(torch.nn.Module):
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
         sigma_shift: Optional[float] = None,
+        inference_schedule: str = "uniform",
+        inference_schedule_shift: Optional[float] = None,
+        ode_solver: str = "euler",
         seed: Optional[int] = None,
         rand_device: str = "cpu",
         tiled: bool = False,
@@ -1000,6 +1058,7 @@ class FastWAM(torch.nn.Module):
         the final Oklab state; it does not change the denoising computation.
         """
         del negative_prompt, text_cfg_scale, tiled, test_action_with_infer_action
+        ode_solver = _normalize_ode_solver(ode_solver)
         if (
             num_video_frames <= 1
             or (num_video_frames - 1) % self.video_expert.future_tube_size
@@ -1043,7 +1102,12 @@ class FastWAM(torch.nn.Module):
         ).to(self.device, self.torch_dtype)
         timesteps_video, deltas_video = (
             self.infer_video_scheduler.build_inference_schedule(
-                num_inference_steps, self.device, future.dtype, sigma_shift
+                num_inference_steps,
+                self.device,
+                future.dtype,
+                sigma_shift,
+                inference_schedule,
+                inference_schedule_shift,
             )
         )
         timesteps_action, deltas_action = (
@@ -1052,49 +1116,112 @@ class FastWAM(torch.nn.Module):
                 self.device,
                 action_state.dtype,
                 sigma_shift,
+                inference_schedule,
+                inference_schedule_shift,
             )
         )
-        for tv, dv, ta, da in zip(
-            timesteps_video,
-            deltas_video,
-            timesteps_action,
-            deltas_action,
+        for step_index, (tv, dv, ta, da) in enumerate(
+            zip(
+                timesteps_video,
+                deltas_video,
+                timesteps_action,
+                deltas_action,
+            )
         ):
             timestep_video = tv[None].to(self.device, future.dtype)
             timestep_action = ta[None].to(self.device, action_state.dtype)
-            video_action = (
-                action
-                if action is not None
-                else (
-                    action_state
-                    if self.video_expert.action_conditioned
-                    else None
+
+            def predict_joint_velocity(
+                future_stage: torch.Tensor,
+                action_stage: torch.Tensor,
+                timestep_video_stage: torch.Tensor,
+                timestep_action_stage: torch.Tensor,
+            ) -> tuple[torch.Tensor, torch.Tensor]:
+                video_action = (
+                    action
+                    if action is not None
+                    else (
+                        action_stage
+                        if self.video_expert.action_conditioned
+                        else None
+                    )
                 )
+                pred_v, pred_a = self._predict_joint_noise(
+                    first_frame=first,
+                    future_x=future_stage,
+                    latents_action=action_stage,
+                    timestep_video=timestep_video_stage,
+                    timestep_action=timestep_action_stage,
+                    context=context,
+                    context_mask=context_mask,
+                    gt_action=video_action,
+                )
+                pred_v = self._clamped_video_velocity(
+                    future_stage, pred_v, timestep_video_stage
+                )
+                return pred_v, pred_a
+
+            pred_video, pred_action = predict_joint_velocity(
+                future, action_state, timestep_video, timestep_action
             )
-            pred_video, pred_action = self._predict_joint_noise(
-                first_frame=first,
-                future_x=future,
-                latents_action=action_state,
-                timestep_video=timestep_video,
-                timestep_action=timestep_action,
-                context=context,
-                context_mask=context_mask,
-                gt_action=video_action,
+            terminal_heun_step = (
+                ode_solver == "heun"
+                and step_index == num_inference_steps - 1
             )
-            pred_video = self._clamped_video_velocity(
-                future, pred_video, timestep_video
+            if ode_solver == "euler" or terminal_heun_step:
+                future = self.infer_video_scheduler.step(pred_video, dv, future)
+                action_state = self.infer_action_scheduler.step(
+                    pred_action, da, action_state
+                )
+                continue
+
+            stage_delta_video = dv if ode_solver == "heun" else dv * 0.5
+            stage_delta_action = da if ode_solver == "heun" else da * 0.5
+            stage_video = self.infer_video_scheduler.step(
+                pred_video, stage_delta_video, future
             )
+            stage_action = self.infer_action_scheduler.step(
+                pred_action, stage_delta_action, action_state
+            )
+            stage_timestep_video = (
+                tv
+                + stage_delta_video
+                * float(self.infer_video_scheduler.num_train_timesteps)
+            )[None].to(self.device, future.dtype)
+            stage_timestep_action = (
+                ta
+                + stage_delta_action
+                * float(self.infer_action_scheduler.num_train_timesteps)
+            )[None].to(self.device, action_state.dtype)
+            stage_pred_video, stage_pred_action = predict_joint_velocity(
+                stage_video,
+                stage_action,
+                stage_timestep_video,
+                stage_timestep_action,
+            )
+            if ode_solver == "heun":
+                stage_pred_video = 0.5 * (pred_video + stage_pred_video)
+                stage_pred_action = 0.5 * (pred_action + stage_pred_action)
             future = self.infer_video_scheduler.step(
-                pred_video,
-                dv,
-                future,
+                stage_pred_video, dv, future
             )
             action_state = self.infer_action_scheduler.step(
-                pred_action,
-                da,
-                action_state,
+                stage_pred_action, da, action_state
             )
-        result = {"action": action_state[0].float().cpu()}
+        result = {
+            "action": action_state[0].float().cpu(),
+            "inference": {
+                "schedule": str(inference_schedule),
+                "schedule_shift": inference_schedule_shift,
+                "sigma_shift": sigma_shift,
+                "ode_solver": ode_solver,
+                "endpoint_policy": _ode_endpoint_policy(ode_solver),
+                "num_steps": int(num_inference_steps),
+                "num_model_evaluations": _num_model_evaluations(
+                    ode_solver, num_inference_steps
+                ),
+            },
+        }
         if return_video:
             rgb = self.color.decode(
                 torch.cat([first.unsqueeze(2), future], dim=2).float()
@@ -1124,6 +1251,9 @@ class FastWAM(torch.nn.Module):
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
         sigma_shift: Optional[float] = None,
+        inference_schedule: str = "uniform",
+        inference_schedule_shift: Optional[float] = None,
+        ode_solver: str = "euler",
         seed: Optional[int] = None,
         rand_device: str = "cpu",
         tiled: bool = False,
@@ -1188,23 +1318,59 @@ class FastWAM(torch.nn.Module):
         )
         timesteps, deltas = (
             self.infer_action_scheduler.build_inference_schedule(
-                num_inference_steps, self.device, latents_action.dtype, sigma_shift
+                num_inference_steps,
+                self.device,
+                latents_action.dtype,
+                sigma_shift,
+                inference_schedule,
+                inference_schedule_shift,
             )
         )
-        for timestep, delta in zip(timesteps, deltas):
+        ode_solver = _normalize_ode_solver(ode_solver)
+        for step_index, (timestep, delta) in enumerate(zip(timesteps, deltas)):
+            timestep_action = timestep[None].to(
+                self.device, latents_action.dtype
+            )
             pred_action = self._predict_action_noise_with_cache(
                 latents_action=latents_action,
-                timestep_action=timestep[None].to(self.device, latents_action.dtype),
+                timestep_action=timestep_action,
                 context=context,
                 context_mask=context_mask,
                 video_kv_cache=video_kv_cache,
                 attention_mask=attention_mask,
                 video_seq_len=video_seq_len,
             )
+            terminal_heun_step = (
+                ode_solver == "heun"
+                and step_index == num_inference_steps - 1
+            )
+            if ode_solver == "euler" or terminal_heun_step:
+                latents_action = self.infer_action_scheduler.step(
+                    pred_action, delta, latents_action
+                )
+                continue
+            stage_delta = delta if ode_solver == "heun" else delta * 0.5
+            stage_action = self.infer_action_scheduler.step(
+                pred_action, stage_delta, latents_action
+            )
+            stage_timestep = (
+                timestep
+                + stage_delta
+                * float(self.infer_action_scheduler.num_train_timesteps)
+            )[None].to(self.device, latents_action.dtype)
+            stage_pred_action = self._predict_action_noise_with_cache(
+                latents_action=stage_action,
+                timestep_action=stage_timestep,
+                context=context,
+                context_mask=context_mask,
+                video_kv_cache=video_kv_cache,
+                attention_mask=attention_mask,
+                video_seq_len=video_seq_len,
+            )
+            if ode_solver == "heun":
+                stage_pred_action = 0.5 * (pred_action + stage_pred_action)
             latents_action = self.infer_action_scheduler.step(
-                pred_action,
-                delta,
-                latents_action,
+                stage_pred_action, delta, latents_action
             )
         return {"action": latents_action[0].float().cpu()}
 
@@ -1224,6 +1390,9 @@ class FastWAM(torch.nn.Module):
         action_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
         sigma_shift: Optional[float] = None,
+        inference_schedule: str = "uniform",
+        inference_schedule_shift: Optional[float] = None,
+        ode_solver: str = "euler",
         seed: Optional[int] = None,
         rand_device: str = "cpu",
         tiled: bool = False,
@@ -1250,6 +1419,9 @@ class FastWAM(torch.nn.Module):
             text_cfg_scale=text_cfg_scale,
             num_inference_steps=num_inference_steps,
             sigma_shift=sigma_shift,
+            inference_schedule=inference_schedule,
+            inference_schedule_shift=inference_schedule_shift,
+            ode_solver=ode_solver,
             seed=seed,
             rand_device=rand_device,
             tiled=tiled,

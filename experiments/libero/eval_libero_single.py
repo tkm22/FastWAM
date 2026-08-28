@@ -1,7 +1,9 @@
 import json
+import hashlib
 import inspect
 import logging
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -38,6 +40,16 @@ from experiments.libero.libero_utils import (
 from fastwam.datasets.lerobot.processors.fastwam_processor import FastWAMProcessor
 from fastwam.datasets.lerobot.utils.normalizer import load_dataset_stats_from_json
 from fastwam.utils.pytorch_utils import set_global_seed
+from fastwam.utils.video_metrics import (
+    frechet_feature_distance,
+    load_i3d_fvd_detector,
+    pil_frames_to_video_tensor,
+    video_haar_wavelet_mse,
+    video_i3d_features,
+    video_lpips,
+    video_psnr,
+    video_ssim,
+)
 from fastwam.datasets.lerobot.robot_video_dataset import DEFAULT_PROMPT
 from libero.libero import benchmark
 from action_ensembler import ActionEnsembler
@@ -321,22 +333,26 @@ def _frame_to_rgb_array(frame: Any) -> np.ndarray:
     return np.array(frame, copy=True)
 
 
-def _compute_clip_mean_psnr(
+def _aligned_future_video_tensors(
     gt_frames: list[Any],
     pred_frames: list[Any],
-    eps: float = 1e-8,
-) -> Optional[float]:
+    *,
+    exclude_conditioning_frame: bool = True,
+) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
     if len(gt_frames) == 0 or len(pred_frames) == 0:
-        return None
+        return None, None
     assert len(gt_frames) == len(pred_frames), (
-        "GT/pred frame count mismatch for PSNR: "
+        "GT/pred frame count mismatch for future-video metrics: "
         f"len(gt_frames)={len(gt_frames)} len(pred_frames)={len(pred_frames)}. "
         "This indicates temporal misalignment in future-video capture."
     )
-    num_frames = len(gt_frames)
+    start = 1 if exclude_conditioning_frame else 0
+    if len(gt_frames) <= start:
+        return None, None
 
-    frame_psnr_values = []
-    for gt_frame, pred_frame in zip(gt_frames[:num_frames], pred_frames[:num_frames]):
+    aligned_gt = []
+    aligned_pred = []
+    for gt_frame, pred_frame in zip(gt_frames[start:], pred_frames[start:]):
         gt_image = _frame_to_rgb_array(gt_frame)
         pred_image = _frame_to_rgb_array(pred_frame)
         target_h, target_w = pred_image.shape[:2]
@@ -344,16 +360,142 @@ def _compute_clip_mean_psnr(
             gt_image = np.array(
                 Image.fromarray(gt_image).resize((target_w, target_h), resample=Image.BILINEAR)
             )
+        aligned_gt.append(Image.fromarray(gt_image.astype(np.uint8)))
+        aligned_pred.append(Image.fromarray(pred_image.astype(np.uint8)))
 
-        gt_f32 = gt_image.astype(np.float32)
-        pred_f32 = pred_image.astype(np.float32)
-        mse = float(np.mean((pred_f32 - gt_f32) ** 2))
-        psnr = 10.0 * np.log10((255.0 * 255.0) / max(mse, eps))
-        frame_psnr_values.append(float(psnr))
+    return (
+        pil_frames_to_video_tensor(aligned_gt),
+        pil_frames_to_video_tensor(aligned_pred),
+    )
 
-    if len(frame_psnr_values) == 0:
+
+def _compute_clip_metrics(
+    gt_frames: list[Any],
+    pred_frames: list[Any],
+    *,
+    lpips_model: Optional[torch.nn.Module] = None,
+    exclude_conditioning_frame: bool = True,
+) -> dict[str, float]:
+    gt_video, pred_video = _aligned_future_video_tensors(
+        gt_frames,
+        pred_frames,
+        exclude_conditioning_frame=exclude_conditioning_frame,
+    )
+    if gt_video is None or pred_video is None:
+        return {}
+    metrics = {
+        "psnr": video_psnr(pred_video, gt_video),
+        "ssim": video_ssim(pred_video, gt_video),
+        "num_future_frames": float(pred_video.shape[1]),
+    }
+    metrics.update(video_haar_wavelet_mse(pred_video, gt_video))
+    if lpips_model is not None:
+        metrics["lpips"] = video_lpips(pred_video, gt_video, lpips_model)
+    return metrics
+
+
+def _mean_metric_dicts(values: list[dict[str, float]]) -> dict[str, float]:
+    keys = sorted({key for value in values for key in value})
+    return {
+        key: float(np.mean([value[key] for value in values if key in value]))
+        for key in keys
+        if any(key in value for value in values)
+    }
+
+
+def _build_lpips_metric(cfg: DictConfig, device: str) -> Optional[torch.nn.Module]:
+    if not bool(cfg.EVALUATION.get("compute_lpips", True)):
         return None
-    return float(np.mean(frame_psnr_values))
+    try:
+        import lpips
+    except ImportError as exc:
+        raise ImportError(
+            "EVALUATION.compute_lpips=true requires the installed `lpips` package"
+        ) from exc
+    return lpips.LPIPS(
+        net=str(cfg.EVALUATION.get("lpips_net", "vgg")),
+        spatial=False,
+        eval_mode=True,
+        pnet_tune=False,
+    ).to(device=device, dtype=torch.float32).eval().requires_grad_(False)
+
+
+def _resolve_fvd_detector_path(cfg: DictConfig) -> Path:
+    configured = Path(str(cfg.EVALUATION.get("fvd_detector_path")))
+    if not configured.is_absolute():
+        configured = project_root / configured
+    return configured.resolve()
+
+
+def _build_fvd_detector(
+    cfg: DictConfig,
+    device: str,
+) -> Optional[torch.jit.ScriptModule]:
+    if not bool(cfg.EVALUATION.get("compute_gfvd", True)):
+        return None
+    return load_i3d_fvd_detector(_resolve_fvd_detector_path(cfg), device)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git_provenance(root: Path) -> dict[str, Any]:
+    def run(*args: str) -> str:
+        return subprocess.check_output(
+            ["git", *args], cwd=root, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+
+    try:
+        commit = run("rev-parse", "HEAD")
+        status = run("status", "--short")
+        diff = subprocess.check_output(
+            ["git", "diff", "--binary", "HEAD"], cwd=root
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": None, "diff_sha256": None}
+    return {
+        "commit": commit,
+        "dirty": bool(status),
+        "diff_sha256": hashlib.sha256(diff).hexdigest() if status else None,
+    }
+
+
+def _inference_provenance(cfg: DictConfig) -> dict[str, Any]:
+    solver = str(cfg.EVALUATION.get("ode_solver", "euler")).lower()
+    solver = {
+        "explicit_euler": "euler",
+        "improved_euler": "heun",
+        "rk2_midpoint": "midpoint",
+    }.get(solver, solver)
+    num_steps = int(cfg.EVALUATION.get("num_inference_steps"))
+    if solver == "euler":
+        num_model_evaluations = num_steps
+    elif solver == "heun":
+        num_model_evaluations = 2 * num_steps - 1
+    else:
+        num_model_evaluations = 2 * num_steps
+    return {
+        "schedule": str(cfg.EVALUATION.get("inference_schedule", "uniform")),
+        "schedule_shift": (
+            None
+            if cfg.EVALUATION.get("inference_schedule_shift") is None
+            else float(cfg.EVALUATION.get("inference_schedule_shift"))
+        ),
+        "sigma_shift": (
+            None
+            if cfg.EVALUATION.get("sigma_shift") is None
+            else float(cfg.EVALUATION.get("sigma_shift"))
+        ),
+        "ode_solver": solver,
+        "endpoint_policy": "terminal_euler" if solver == "heun" else None,
+        "num_steps": num_steps,
+        "num_model_evaluations": num_model_evaluations,
+    }
 
 
 def _predict_action_chunk(
@@ -399,6 +541,15 @@ def _predict_action_chunk(
             if cfg.EVALUATION.get("sigma_shift") is None
             else float(cfg.EVALUATION.get("sigma_shift"))
         ),
+        "inference_schedule": str(
+            cfg.EVALUATION.get("inference_schedule", "uniform")
+        ),
+        "inference_schedule_shift": (
+            None
+            if cfg.EVALUATION.get("inference_schedule_shift") is None
+            else float(cfg.EVALUATION.get("inference_schedule_shift"))
+        ),
+        "ode_solver": str(cfg.EVALUATION.get("ode_solver", "euler")),
         "seed": None if cfg.get("seed") is None else int(cfg.seed),
         "rand_device": str(cfg.EVALUATION.get("rand_device", "cpu")),
         "tiled": bool(cfg.EVALUATION.get("tiled", False)),
@@ -412,6 +563,10 @@ def _predict_action_chunk(
 
     with torch.no_grad():
         if visualize_future_video:
+            if "test_action_with_infer_action" in inspect.signature(
+                model.infer_joint
+            ).parameters:
+                infer_kwargs["test_action_with_infer_action"] = False
             pred = model.infer_joint(**infer_kwargs)
             predicted_future_frames = _select_predicted_future_frames(pred["video"], cfg)
         else:
@@ -455,12 +610,15 @@ def run_single_episode(
     input_w: int,
     input_h: int,
     model_device: str,
-) -> tuple[bool, list, list[dict[str, Any]], Optional[float]]:
+    lpips_model: Optional[torch.nn.Module],
+    fvd_detector: Optional[torch.nn.Module],
+) -> tuple[bool, list, list[dict[str, Any]], dict[str, float]]:
     max_steps = _get_max_steps(cfg.EVALUATION.task_suite_name)
     replan_steps = int(cfg.EVALUATION.get("replan_steps", 5))
     num_steps_wait = int(cfg.EVALUATION.get("num_steps_wait", 5))
     use_action_ensembler = bool(cfg.EVALUATION.get("use_action_ensembler", False))
     visualize_future_video = bool(cfg.EVALUATION.get("visualize_future_video", False))
+    save_rollout_videos = bool(cfg.EVALUATION.get("save_rollout_videos", True))
     capture_steps = set(_get_future_frame_capture_steps(cfg)[1:])
 
     env.reset()
@@ -471,7 +629,7 @@ def run_single_episode(
 
     replay_images = []
     predicted_future_video_clips: list[dict[str, Any]] = []
-    episode_future_clip_psnr: list[float] = []
+    episode_future_clip_metrics: list[dict[str, float]] = []
     pending_actions: list[list[float]] = []
     current_predicted_future_clip: Optional[dict[str, Any]] = None
     current_replan_step = 0
@@ -514,8 +672,9 @@ def run_single_episode(
                 pending_actions = [ensembler.get_action(ts).tolist() for ts in range(t, t + replan_steps)]
             else:
                 pending_actions = action_chunk[:replan_steps].tolist()
-            replay_images.append(imgs.copy())
-        else:
+            if save_rollout_videos:
+                replay_images.append(imgs.copy())
+        elif save_rollout_videos:
             imgs = get_libero_image(obs)
             replay_images.append(imgs.copy())
 
@@ -562,12 +721,43 @@ def run_single_episode(
                     f"len(pred_frames)={len(current_predicted_future_clip['pred_frames'])} "
                     f"episode={episode_idx} replan={current_predicted_future_clip['replan_idx']}."
                 )
-                clip_psnr = _compute_clip_mean_psnr(
+                clip_metrics = _compute_clip_metrics(
                     current_predicted_future_clip["gt_frames"],
                     current_predicted_future_clip["pred_frames"],
+                    lpips_model=lpips_model,
+                    exclude_conditioning_frame=bool(
+                        cfg.EVALUATION.get(
+                            "metrics_exclude_conditioning_frame", True
+                        )
+                    ),
                 )
-                if clip_psnr is not None:
-                    episode_future_clip_psnr.append(clip_psnr)
+                current_predicted_future_clip["metrics"] = clip_metrics
+                if clip_metrics:
+                    episode_future_clip_metrics.append(clip_metrics)
+                    if fvd_detector is not None:
+                        gt_video, pred_video = _aligned_future_video_tensors(
+                            current_predicted_future_clip["gt_frames"],
+                            current_predicted_future_clip["pred_frames"],
+                            exclude_conditioning_frame=bool(
+                                cfg.EVALUATION.get(
+                                    "metrics_exclude_conditioning_frame", True
+                                )
+                            ),
+                        )
+                        if gt_video is not None and pred_video is not None:
+                            features = video_i3d_features(
+                                torch.stack([gt_video, pred_video]),
+                                fvd_detector,
+                                num_frames=int(
+                                    cfg.EVALUATION.get("gfvd_num_frames", 16)
+                                ),
+                            )
+                            current_predicted_future_clip[
+                                "_gt_fvd_feature"
+                            ] = features[0]
+                            current_predicted_future_clip[
+                                "_pred_fvd_feature"
+                            ] = features[1]
                 predicted_future_video_clips.append(current_predicted_future_clip)
                 current_predicted_future_clip = None
         if done:
@@ -575,10 +765,12 @@ def run_single_episode(
         t += 1
     pbar.close()
 
-    episode_mean_psnr = (
-        float(np.mean(episode_future_clip_psnr)) if len(episode_future_clip_psnr) > 0 else None
+    return (
+        bool(done),
+        replay_images,
+        predicted_future_video_clips,
+        _mean_metric_dicts(episode_future_clip_metrics),
     )
-    return bool(done), replay_images, predicted_future_video_clips, episode_mean_psnr
 
 
 def run_single_task(
@@ -594,9 +786,12 @@ def run_single_task(
     input_w: int,
     input_h: int,
     model_device: str,
+    lpips_model: Optional[torch.nn.Module],
+    fvd_detector: Optional[torch.nn.Module],
 ) -> dict:
     env, task_description = get_libero_env(task, LIBERO_ENV_RESOLUTION, cfg.get("seed"))
     visualize_future_video = bool(cfg.EVALUATION.get("visualize_future_video", False))
+    save_rollout_videos = bool(cfg.EVALUATION.get("save_rollout_videos", True))
     results = {
         "successes": 0,
         "failure_episodes": [],
@@ -604,11 +799,33 @@ def run_single_task(
         "task_description": task_description,
     }
     if visualize_future_video:
-        results["episode_future_video_psnr"] = []
+        results["episode_future_video_metrics"] = []
+        results["future_video_clip_metrics"] = []
+        results["prediction_video_files"] = []
         results["future_video_psnr_mean"] = None
+        results["future_video_metrics_mean"] = {}
+    results["rollout_video_files"] = []
+    gt_fvd_features = []
+    pred_fvd_features = []
 
-    for trial_idx in range(int(cfg.EVALUATION.num_trials)):
-        success, replay_images, predicted_future_video_clips, episode_mean_psnr = run_single_episode(
+    trial_indices_cfg = cfg.EVALUATION.get("trial_indices")
+    if trial_indices_cfg is None:
+        trial_indices = list(range(int(cfg.EVALUATION.num_trials)))
+    else:
+        trial_indices = [int(index) for index in trial_indices_cfg]
+        if not trial_indices:
+            raise ValueError("EVALUATION.trial_indices must be non-empty when set")
+        if len(set(trial_indices)) != len(trial_indices):
+            raise ValueError("EVALUATION.trial_indices must not contain duplicates")
+        if min(trial_indices) < 0 or max(trial_indices) >= len(initial_states):
+            raise ValueError(
+                "EVALUATION.trial_indices are outside the available initial "
+                f"state range [0, {len(initial_states) - 1}]"
+            )
+    results["trial_indices"] = trial_indices
+
+    for trial_idx in trial_indices:
+        success, replay_images, predicted_future_video_clips, episode_metrics = run_single_episode(
             env=env,
             initial_state=initial_states[trial_idx],
             task_description=task_description,
@@ -620,6 +837,8 @@ def run_single_task(
             input_w=input_w,
             input_h=input_h,
             model_device=model_device,
+            lpips_model=lpips_model,
+            fvd_detector=fvd_detector,
         )
         if success:
             results["successes"] += 1
@@ -627,15 +846,19 @@ def run_single_task(
         else:
             results["failure_episodes"].append(trial_idx)
         if visualize_future_video:
-            results["episode_future_video_psnr"].append(episode_mean_psnr)
+            results["episode_future_video_metrics"].append(
+                {"trial_index": trial_idx, **episode_metrics}
+            )
 
-        save_rollout_video(
-            video_dir,
-            replay_images,
-            f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
-            success=success,
-            task_description=task_description,
-        )
+        if save_rollout_videos:
+            rollout_video_path = save_rollout_video(
+                video_dir,
+                replay_images,
+                f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
+                success=success,
+                task_description=task_description,
+            )
+            results["rollout_video_files"].append(rollout_video_path)
         if visualize_future_video:
             if len(predicted_future_video_clips) == 0:
                 logging.warning(
@@ -647,18 +870,36 @@ def run_single_task(
                 all_gt_frames = []
                 all_pred_frames = []
                 for clip in predicted_future_video_clips:
+                    if "_gt_fvd_feature" in clip:
+                        gt_fvd_features.append(clip["_gt_fvd_feature"])
+                        pred_fvd_features.append(clip["_pred_fvd_feature"])
                     all_gt_frames.extend(clip["gt_frames"])
                     all_pred_frames.extend(clip["pred_frames"])
-                    save_prediction_video(
-                        predicted_video_dir,
-                        clip["gt_frames"],
-                        clip["pred_frames"],
-                        f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
-                        clip["replan_idx"],
-                        success=success,
-                        task_description=task_description,
+                    if bool(
+                        cfg.EVALUATION.get(
+                            "save_prediction_clip_videos", True
+                        )
+                    ):
+                        prediction_video_path = save_prediction_video(
+                            predicted_video_dir,
+                            clip["gt_frames"],
+                            clip["pred_frames"],
+                            f"task{cfg.EVALUATION.task_id}_trial{trial_idx}",
+                            clip["replan_idx"],
+                            success=success,
+                            task_description=task_description,
+                        )
+                        results["prediction_video_files"].append(
+                            prediction_video_path
+                        )
+                    results["future_video_clip_metrics"].append(
+                        {
+                            "trial_index": trial_idx,
+                            "replan_index": int(clip["replan_idx"]),
+                            **clip.get("metrics", {}),
+                        }
                     )
-                save_prediction_video(
+                prediction_video_path = save_prediction_video(
                     predicted_video_dir,
                     all_gt_frames,
                     all_pred_frames,
@@ -667,11 +908,34 @@ def run_single_task(
                     success=success,
                     task_description=task_description,
                 )
+                results["prediction_video_files"].append(prediction_video_path)
 
     if visualize_future_video:
-        valid_episode_psnr = [x for x in results["episode_future_video_psnr"] if x is not None]
-        if len(valid_episode_psnr) > 0:
-            results["future_video_psnr_mean"] = float(np.mean(valid_episode_psnr))
+        metric_rows = [
+            {
+                key: value
+                for key, value in row.items()
+                if key != "trial_index"
+            }
+            for row in results["episode_future_video_metrics"]
+        ]
+        results["future_video_metrics_mean"] = _mean_metric_dicts(metric_rows)
+        results["future_video_psnr_mean"] = results[
+            "future_video_metrics_mean"
+        ].get("psnr")
+        results["gfvd_num_clips"] = len(gt_fvd_features)
+        if len(gt_fvd_features) >= 2:
+            results["future_video_metrics_mean"]["gfvd"] = (
+                frechet_feature_distance(
+                    torch.stack(pred_fvd_features),
+                    torch.stack(gt_fvd_features),
+                )
+            )
+        elif fvd_detector is not None:
+            logging.warning(
+                "gFVD requires at least two valid clips; collected %s",
+                len(gt_fvd_features),
+            )
     return results
 
 
@@ -700,6 +964,16 @@ def eval_single_process(cfg: DictConfig):
     model = instantiate(cfg.model, model_dtype=model_dtype, device=model_device)
     _load_model_checkpoint(model, str(cfg.ckpt))
     model = model.to(model_device).eval()
+    lpips_model = (
+        _build_lpips_metric(cfg, model_device)
+        if bool(cfg.EVALUATION.get("visualize_future_video", False))
+        else None
+    )
+    fvd_detector = (
+        _build_fvd_detector(cfg, model_device)
+        if bool(cfg.EVALUATION.get("visualize_future_video", False))
+        else None
+    )
 
     dataset_stats_path = _resolve_dataset_stats_path(cfg)
     dataset_stats = load_dataset_stats_from_json(str(dataset_stats_path))
@@ -725,8 +999,23 @@ def eval_single_process(cfg: DictConfig):
 
     local_log_dir = Path(cfg.EVALUATION.output_dir)
     local_log_dir.mkdir(parents=True, exist_ok=True)
+    resolved_config_path = (
+        local_log_dir
+        / "resolved_configs"
+        / (
+            f"{cfg.EVALUATION.task_suite_name}_task{int(cfg.EVALUATION.task_id)}"
+            f"_gpu{int(cfg.gpu_id)}.yaml"
+        )
+    )
+    resolved_config_path.parent.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(
+        config=cfg,
+        f=str(resolved_config_path),
+        resolve=True,
+    )
     video_dir = local_log_dir / cfg.EVALUATION.task_suite_name / "videos"
-    video_dir.mkdir(parents=True, exist_ok=True)
+    if bool(cfg.EVALUATION.get("save_rollout_videos", True)):
+        video_dir.mkdir(parents=True, exist_ok=True)
     predicted_video_dir = local_log_dir / cfg.EVALUATION.task_suite_name / "predicted_videos"
     if bool(cfg.EVALUATION.get("visualize_future_video", False)):
         predicted_video_dir.mkdir(parents=True, exist_ok=True)
@@ -736,20 +1025,83 @@ def eval_single_process(cfg: DictConfig):
     task = task_suite.get_task(cfg.EVALUATION.task_id)
     initial_states = task_suite.get_task_init_states(cfg.EVALUATION.task_id)
 
-    while len(initial_states) < int(cfg.EVALUATION.num_trials):
-        initial_states.extend(initial_states[: (int(cfg.EVALUATION.num_trials) - len(initial_states))])
+    trial_indices_cfg = cfg.EVALUATION.get("trial_indices")
+    if trial_indices_cfg is None:
+        requested_episode_count = int(cfg.EVALUATION.num_trials)
+        required_initial_states = requested_episode_count
+    else:
+        trial_indices = [int(index) for index in trial_indices_cfg]
+        requested_episode_count = len(trial_indices)
+        required_initial_states = max(trial_indices) + 1 if trial_indices else 0
+    while len(initial_states) < required_initial_states:
+        initial_states.extend(
+            initial_states[: (required_initial_states - len(initial_states))]
+        )
 
     results = {
         "task_suite": cfg.EVALUATION.task_suite_name,
         "task_id": cfg.EVALUATION.task_id,
         "task_description": None,
         "successes": 0,
-        "total_episodes": int(cfg.EVALUATION.num_trials),
+        "total_episodes": requested_episode_count,
         "gpu_id": int(cfg.gpu_id),
         "success_episodes": [],
         "failure_episodes": [],
         "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "duration": 0,
+        "ckpt": str(Path(str(cfg.ckpt)).resolve()),
+        "checkpoint_type": (
+            "ema" if Path(str(cfg.ckpt)).stem.endswith("_ema") else "raw"
+        ),
+        "seed": None if cfg.get("seed") is None else int(cfg.seed),
+        "inference": _inference_provenance(cfg),
+        "evaluation_protocol": {
+            "scope": "closed_loop_libero",
+            "visualize_future_video": bool(
+                cfg.EVALUATION.get("visualize_future_video", False)
+            ),
+            "save_rollout_videos": bool(
+                cfg.EVALUATION.get("save_rollout_videos", True)
+            ),
+            "save_prediction_clip_videos": bool(
+                cfg.EVALUATION.get("save_prediction_clip_videos", True)
+            ),
+            "compute_lpips": bool(cfg.EVALUATION.get("compute_lpips", True)),
+            "compute_gfvd": bool(cfg.EVALUATION.get("compute_gfvd", True)),
+        },
+        "metric_protocol": {
+            "future_frames_only": bool(
+                cfg.EVALUATION.get(
+                    "metrics_exclude_conditioning_frame", True
+                )
+            ),
+            "psnr_data_range": 1.0,
+            "ssim_kernel": 11,
+            "lpips_net": (
+                str(cfg.EVALUATION.get("lpips_net", "vgg"))
+                if lpips_model is not None
+                else None
+            ),
+            "wavelet": "one_level_orthonormal_haar_spatial_and_temporal",
+            "gfvd": (
+                {
+                    "feature_detector": "kinetics_400_i3d_torchscript",
+                    "detector_path": str(_resolve_fvd_detector_path(cfg)),
+                    "detector_sha256": _sha256_file(
+                        _resolve_fvd_detector_path(cfg)
+                    ),
+                    "num_frames": int(
+                        cfg.EVALUATION.get("gfvd_num_frames", 16)
+                    ),
+                    "temporal_resample": "evenly_spaced_nearest",
+                    "distribution_samples": "closed_loop_replan_clips",
+                }
+                if fvd_detector is not None
+                else None
+            ),
+        },
+        "code": _git_provenance(project_root),
+        "resolved_config": str(resolved_config_path.resolve()),
     }
 
     logging.info("Running LIBERO evaluation with env_num=1")
@@ -765,8 +1117,14 @@ def eval_single_process(cfg: DictConfig):
         input_w=input_w,
         input_h=input_h,
         model_device=model_device,
+        lpips_model=lpips_model,
+        fvd_detector=fvd_detector,
     )
     results.update(task_results)
+    if results["metric_protocol"]["gfvd"] is not None:
+        results["metric_protocol"]["gfvd"]["num_clips"] = results.get(
+            "gfvd_num_clips", 0
+        )
 
     results["duration"] = time.time() - start_time
     output_dir = Path(cfg.EVALUATION.output_dir) / cfg.EVALUATION.task_suite_name
@@ -778,7 +1136,7 @@ def eval_single_process(cfg: DictConfig):
 
     print(
         f"Task {cfg.EVALUATION.task_id} completed: "
-        f"{results['successes']}/{cfg.EVALUATION.num_trials} successes"
+        f"{results['successes']}/{results['total_episodes']} successes"
     )
     if results.get("future_video_psnr_mean") is not None:
         print(f"Task {cfg.EVALUATION.task_id} future-video PSNR mean: {results['future_video_psnr_mean']:.4f}")
