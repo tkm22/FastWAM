@@ -5,7 +5,6 @@ checkpoints
 data/*
 apex/
 assets/
-runs
 runs/
 evaluate_results/
 .deepspeed*
@@ -27,7 +26,6 @@ evaluate_results/
 *.tar.gz
 *.gz
 *.pkl
-*.pt
 *.bin
 *.pickle
 *.txt

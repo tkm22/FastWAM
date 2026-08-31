@@ -8,7 +8,7 @@ import torch
 from torch import nn
 
 
-# These match artifacts/2026-08-04_stride4_bal100k.pt, the
+# These match auxiliary_weights/projections/2026-08-04_stride4_bal100k.pt, the
 # projection artifact selected by the FastWAM model configs.  Production models
 # still load these values from their artifact; the defaults keep direct uses of
 # this transform aligned with the configured LIBERO pixel space.

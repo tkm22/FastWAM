@@ -17,6 +17,7 @@ EVALUATION:
   task_suite_name: libero_spatial
   task_id: 0
   num_trials: 50
+  trial_indices: null
   output_dir: ./evaluate_results/libero/${hydra:runtime.choices.task}/${now:%Y%m%d_%H%M%S}
 
   # Runtime behavior
@@ -25,7 +26,17 @@ EVALUATION:
   replan_steps: 10
   binarize_gripper: true
   use_action_ensembler: false
+  # Pixel WAM evaluates the full eight-frame prediction at every closed-loop
+  # replan by default. This is independent from video encoding below.
+  compute_video_metrics: true
+  # Deprecated compatibility flag for older launch commands. New code should
+  # use compute_video_metrics and save_prediction_videos explicitly.
   visualize_future_video: false
+  # Keep historical rollout-video saving by default. Large success-only
+  # evaluations can disable it explicitly and use a separate fixed video set.
+  save_rollout_videos: true
+  save_prediction_videos: true
+  save_prediction_clip_videos: true
 
   # Action inference
   action_horizon: null
@@ -39,6 +50,20 @@ EVALUATION:
   negative_prompt: ""
   rand_device: cpu
   tiled: false
+
+  # Future-video metrics. They are evaluated at every closed-loop replan on
+  # generated frames only; the conditioning frame is saved for visualization
+  # but excluded from scores. At each replan the evaluator saves the simulator
+  # and controller state, executes the metric horizon to collect GT frames,
+  # restores that state, then executes `replan_steps` actions for success rate.
+  video_metric_horizon_steps: 32
+  video_metric_replan_indices: null
+  compute_lpips: true
+  lpips_net: vgg
+  metrics_exclude_conditioning_frame: true
+  compute_gfvd: true
+  fvd_detector_path: auxiliary_weights/metrics/i3d_torchscript.pt
+  gfvd_num_frames: 16
 
   # Optional external inputs
   dataset_stats_path: null

@@ -358,7 +358,10 @@ def main():
         "--output",
         type=Path,
         required=True,
-        help="Dated output artifact path, for example artifacts/YYYY-MM-DD_stride4_<sampling>.pt.",
+        help=(
+            "Dated output path, for example "
+            "auxiliary_weights/projections/YYYY-MM-DD_stride4_<sampling>.pt."
+        ),
     )
     p.add_argument(
         "--clips-per-task",

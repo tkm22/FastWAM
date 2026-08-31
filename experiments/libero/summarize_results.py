@@ -1,307 +1,320 @@
-import os
-import json
 import argparse
+import json
+import os
 from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
-import math
+import scipy.linalg
 
-def format_time(seconds):
-    """Format seconds as a human-readable duration string.
 
-    - Below 1 minute: SS
-    - Below 1 hour: MMSS
-    - 1 hour or longer: HHMMSS
-    """
-    seconds = round(seconds)  # Round to integer seconds
-    
+SUITES = (
+    "libero_spatial",
+    "libero_object",
+    "libero_goal",
+    "libero_10",
+    "libero_90",
+)
+
+
+def format_time(seconds: float) -> str:
+    seconds = round(seconds)
     if seconds < 60:
         return f"{seconds:02d}s"
-    elif seconds < 3600:
-        minutes = seconds // 60
-        remaining_seconds = seconds % 60
-        return f"{minutes:02d}m{remaining_seconds:02d}s"
-    else:
-        hours = seconds // 3600
-        remaining = seconds % 3600
-        minutes = remaining // 60
-        remaining_seconds = remaining % 60
-        return f"{hours:02d}h{minutes:02d}m{remaining_seconds:02d}s"
+    if seconds < 3600:
+        return f"{seconds // 60:02d}m{seconds % 60:02d}s"
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    return f"{hours:02d}h{minutes:02d}m{seconds % 60:02d}s"
 
-def summarize_results(output_dir):
-    """Summarize all evaluation results.
 
-    Args:
-        output_dir: Root directory containing result files.
-    """
-    # Store statistics for each suite
-    suite_stats = defaultdict(lambda: {
-        'total_tasks': 0,
-        'total_trials': 0,
-        'total_successes': 0,
-        'total_time': 0,
-        'max_time': 0,
-        'psnr_sum': 0.0,
-        'psnr_count': 0
-    })
-    
-    # Store detailed per-task results
-    task_results = {}
-    has_psnr_metric = False
-    
-    # Iterate over all suite directories
-    for suite in ["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"]:
-        suite_dir = os.path.join(output_dir, suite)
-        if not os.path.exists(suite_dir):
+def _mean_metrics(rows: list[dict[str, float]]) -> dict[str, float]:
+    keys = sorted({key for row in rows for key in row})
+    return {
+        key: sum(float(row[key]) for row in rows if row.get(key) is not None)
+        / sum(row.get(key) is not None for row in rows)
+        for key in keys
+        if any(row.get(key) is not None for row in rows)
+    }
+
+
+def _frechet_feature_distance(pred: np.ndarray, target: np.ndarray) -> float:
+    pred = np.asarray(pred, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+    if pred.ndim != 2 or target.ndim != 2 or pred.shape[1] != target.shape[1]:
+        raise ValueError(
+            f"Invalid FVD feature shapes: pred={pred.shape} target={target.shape}"
+        )
+    if pred.shape[0] < 2 or target.shape[0] < 2:
+        raise ValueError("FVD requires at least two clips per distribution")
+    pred_mean = pred.mean(axis=0)
+    target_mean = target.mean(axis=0)
+    pred_cov = np.cov(pred, rowvar=False)
+    target_cov = np.cov(target, rowvar=False)
+    covariance_mean = scipy.linalg.sqrtm(pred_cov @ target_cov)
+    if not np.isfinite(covariance_mean).all():
+        offset = np.eye(pred_cov.shape[0]) * 1e-6
+        covariance_mean = scipy.linalg.sqrtm(
+            (pred_cov + offset) @ (target_cov + offset)
+        )
+    if np.iscomplexobj(covariance_mean):
+        imaginary_max = float(np.max(np.abs(covariance_mean.imag)))
+        if imaginary_max > 1e-3:
+            raise ValueError(
+                "FVD covariance product has a large imaginary component: "
+                f"{imaginary_max}"
+            )
+        covariance_mean = covariance_mean.real
+    distance = (
+        np.square(pred_mean - target_mean).sum()
+        + np.trace(pred_cov + target_cov - 2.0 * covariance_mean)
+    )
+    return max(float(np.real(distance)), 0.0)
+
+
+def _load_fvd_features(result: dict) -> tuple[np.ndarray, np.ndarray] | None:
+    configured = result.get("fvd_feature_file")
+    if not configured:
+        return None
+    feature_file = Path(str(configured))
+    if not feature_file.is_file():
+        raise FileNotFoundError(f"Missing task FVD feature file: {feature_file}")
+    with np.load(feature_file) as features:
+        gt = np.asarray(features["gt"], dtype=np.float32)
+        pred = np.asarray(features["pred"], dtype=np.float32)
+    if gt.shape != pred.shape:
+        raise ValueError(
+            f"Task FVD feature shape mismatch: gt={gt.shape} pred={pred.shape}"
+        )
+    return gt, pred
+
+
+def _result_files(output_dir: Path):
+    for suite in SUITES:
+        suite_dir = output_dir / suite
+        if not suite_dir.is_dir():
             continue
-            
-        # Read all result files
-        for filename in os.listdir(suite_dir):
-            if not filename.startswith('gpu') or not filename.endswith('_results.json'):
-                continue
-                
-            with open(os.path.join(suite_dir, filename), 'r') as f:
-                result = json.load(f)
-            
-            # Extract task ID from the filename
-            parts = filename.split('_')
-            task_id = int(parts[1].replace('task', ''))
-            
-            # Create the task identifier (suite_taskid)
-            task_key = f"{suite}_{task_id}"
-                
-            stats = suite_stats[suite]
-            stats['total_tasks'] += 1
-            stats['total_trials'] += result['total_episodes']
-            stats['total_successes'] += result['successes']
-            stats['total_time'] += result['duration']
-            stats['max_time'] = max(stats['max_time'], result['duration'])
-            if 'future_video_psnr_mean' in result:
-                has_psnr_metric = True
-                if result['future_video_psnr_mean'] is not None:
-                    stats['psnr_sum'] += float(result['future_video_psnr_mean'])
-                    stats['psnr_count'] += 1
-            
-            # Store detailed task results
-            task_result = {
-                'success_rate': result['successes'] / result['total_episodes'] * 100,
-                'duration': result['duration'],
-                'total_episodes': result['total_episodes'],
-                'successes': result['successes'],
-                'task_description': result['task_description'] if 'task_description' in result else ''
+        yield from sorted(suite_dir.glob("gpu*_task*_results.json"))
+
+
+def summarize_results(output_dir: str) -> None:
+    output_path = Path(output_dir).resolve()
+    suite_stats = defaultdict(
+        lambda: {
+            "total_tasks": 0,
+            "total_trials": 0,
+            "total_successes": 0,
+            "total_time": 0.0,
+            "max_time": 0.0,
+            "metric_rows": [],
+            "gt_fvd_features": [],
+            "pred_fvd_features": [],
+        }
+    )
+    task_results: dict[str, dict] = {}
+    run_metadata: dict = {}
+    all_gt_fvd_features = []
+    all_pred_fvd_features = []
+
+    for result_file in _result_files(output_path):
+        with result_file.open("r", encoding="utf-8") as handle:
+            result = json.load(handle)
+        suite = str(result.get("task_suite", result_file.parent.name))
+        task_id = int(result["task_id"])
+        task_key = f"{suite}_{task_id}"
+        stats = suite_stats[suite]
+        stats["total_tasks"] += 1
+        stats["total_trials"] += int(result["total_episodes"])
+        stats["total_successes"] += int(result["successes"])
+        stats["total_time"] += float(result["duration"])
+        stats["max_time"] = max(stats["max_time"], float(result["duration"]))
+
+        metrics = {
+            key: float(value)
+            for key, value in result.get("future_video_metrics_mean", {}).items()
+            if value is not None
+        }
+        if not metrics and result.get("future_video_psnr_mean") is not None:
+            metrics["psnr"] = float(result["future_video_psnr_mean"])
+        if metrics:
+            stats["metric_rows"].append(
+                {key: value for key, value in metrics.items() if key != "gfvd"}
+            )
+
+        fvd_features = _load_fvd_features(result)
+        if fvd_features is not None:
+            gt_features, pred_features = fvd_features
+            stats["gt_fvd_features"].append(gt_features)
+            stats["pred_fvd_features"].append(pred_features)
+            all_gt_fvd_features.append(gt_features)
+            all_pred_fvd_features.append(pred_features)
+
+        task_results[task_key] = {
+            "success_rate": 100.0 * result["successes"] / result["total_episodes"],
+            "duration": float(result["duration"]),
+            "total_episodes": int(result["total_episodes"]),
+            "successes": int(result["successes"]),
+            "trial_indices": result.get("trial_indices"),
+            "task_description": result.get("task_description", ""),
+            "future_video_metrics_mean": metrics,
+            "fvd_feature_file": result.get("fvd_feature_file"),
+            "result_file": str(result_file),
+        }
+        if not run_metadata:
+            run_metadata = {
+                key: result.get(key)
+                for key in (
+                    "ckpt",
+                    "checkpoint_type",
+                    "seed",
+                    "inference",
+                    "evaluation_protocol",
+                    "metric_protocol",
+                    "code",
+                    "resolved_config",
+                )
             }
-            if 'future_video_psnr_mean' in result:
-                task_result['future_video_psnr_mean'] = (
-                    float(result['future_video_psnr_mean'])
-                    if result['future_video_psnr_mean'] is not None
-                    else None
-                )
-            task_results[task_key] = task_result
-    
-    # Print summary results
-    print("\n=== Evaluation Results Summary ===")
-    print("\nStatistics for each task suite:")
-    
-    total_success_rate = 0
-    total_time = 0
-    total_suites = 0
-    overall_psnr_sum = 0.0
-    overall_psnr_count = 0
-    
-    # Prepare DataFrame rows
-    df_data = {
-        'Task Suite': [],
-        'Success Rate (%)': [],
-        'Average Time (s)': [],
-        'Max Time (s)': []
-    }
-    if has_psnr_metric:
-        df_data['Average Future PSNR (dB)'] = []
-    
-    for suite, stats in suite_stats.items():
-        if stats['total_trials'] > 0:
-            success_rate = stats['total_successes'] / stats['total_trials'] * 100
-            avg_time = stats['total_time'] / stats['total_tasks']
-            max_time = stats['max_time']
-            suite_avg_psnr = None
-            if has_psnr_metric:
-                suite_avg_psnr = (
-                    stats['psnr_sum'] / stats['psnr_count']
-                    if stats['psnr_count'] > 0
-                    else None
-                )
-            
-            print(f"\n{suite}:")
-            print(f"- Tasks completed: {stats['total_tasks']}")
-            print(f"- Total attempts: {stats['total_trials']}")
-            print(f"- Successful attempts: {stats['total_successes']}")
-            print(f"- Success rate: {success_rate:.2f}%")
-            print(f"- Total time: {format_time(stats['total_time'])}")
-            print(f"- Average time per task: {format_time(avg_time)}")
-            print(f"- Longest task time: {format_time(max_time)}")
-            if has_psnr_metric:
-                if suite_avg_psnr is not None:
-                    print(f"- Average future-video PSNR: {suite_avg_psnr:.4f} dB")
-                else:
-                    print("- Average future-video PSNR: N/A")
-            
-            # Append to DataFrame rows
-            df_data['Task Suite'].append(suite)
-            df_data['Success Rate (%)'].append(f"{success_rate:.2f}")
-            df_data['Average Time (s)'].append(f"{avg_time:.2f}")
-            df_data['Max Time (s)'].append(f"{max_time:.2f}")
-            if has_psnr_metric:
-                df_data['Average Future PSNR (dB)'].append(
-                    f"{suite_avg_psnr:.4f}" if suite_avg_psnr is not None else "N/A"
-                )
-            
-            total_success_rate += success_rate
-            total_time += stats['total_time']
-            total_suites += 1
-            if has_psnr_metric:
-                overall_psnr_sum += stats['psnr_sum']
-                overall_psnr_count += stats['psnr_count']
-    
-    if total_suites > 0:
-        print("\nOverall statistics:")
-        avg_success_rate = total_success_rate/total_suites
-        avg_task_time = total_time/sum(s['total_tasks'] for s in suite_stats.values())
-        max_task_time = max(s['max_time'] for s in suite_stats.values())
-        overall_avg_psnr = None
-        if has_psnr_metric:
-            overall_avg_psnr = overall_psnr_sum / overall_psnr_count if overall_psnr_count > 0 else None
-        
-        print(f"- Average success rate: {avg_success_rate:.2f}%")
-        print(f"- Total time: {format_time(total_time)}")
-        print(f"- Average time per task: {format_time(avg_task_time)}")
-        print(f"- Longest task time: {format_time(max_task_time)}")
-        if has_psnr_metric:
-            if overall_avg_psnr is not None:
-                print(f"- Average future-video PSNR: {overall_avg_psnr:.4f} dB")
-            else:
-                print("- Average future-video PSNR: N/A")
-        
-        # Add an overall summary row
-        df_data['Task Suite'].append('Overall')
-        df_data['Success Rate (%)'].append(f"{avg_success_rate:.2f}")
-        df_data['Average Time (s)'].append(f"{avg_task_time:.2f}")
-        df_data['Max Time (s)'].append(f"{max_task_time:.2f}")
-        if has_psnr_metric:
-            df_data['Average Future PSNR (dB)'].append(
-                f"{overall_avg_psnr:.4f}" if overall_avg_psnr is not None else "N/A"
-            )
-    
-    # Create and save the DataFrame
-    df = pd.DataFrame(df_data)
-    
-    # Use the last checkpoint path component as the title
-    ckpt_path = os.environ.get('CKPT', '')
-    title = os.path.basename(ckpt_path) if ckpt_path else 'Results'
-    
-    # Transpose the DataFrame and use Task Suite as column names
-    df = df.set_index('Task Suite').T
-    
-    # Add a title line to the CSV file
-    with open(os.path.join(output_dir, 'summary.csv'), 'w') as f:
-        f.write(f"{title}\n")  # Write the title
-        df.to_csv(f)
-    
-    # Create the per-task success-rate CSV
-    task_success_data = {
-        'Task': [],
-        'Description': [],
-        'Success Rate (%)': []
-    }
-    if has_psnr_metric:
-        task_success_data['Future Video PSNR (dB)'] = []
-    
-    # Group tasks by suite
-    suite_tasks = defaultdict(list)
-    for task in task_results:
-        suite = task.split('_')[0] + '_' + task.split('_')[1]
-        suite_tasks[suite].append(task)
-    
-    # Sort tasks within each suite
-    for suite in suite_tasks:
-        suite_tasks[suite].sort(key=lambda x: int(x.split('_')[-1]))
-    
-    # Fill per-task success-rate rows
-    for suite in sorted(suite_tasks.keys()):
-        for task in suite_tasks[suite]:
-            result = task_results[task]
-            task_success_data['Task'].append(task)
-            task_success_data['Description'].append(
-                result['task_description'] if 'task_description' in result else ''
-            )
-            task_success_data['Success Rate (%)'].append(f"{result['success_rate']:.2f}")
-            if has_psnr_metric:
-                psnr = result['future_video_psnr_mean'] if 'future_video_psnr_mean' in result else None
-                task_success_data['Future Video PSNR (dB)'].append(
-                    f"{psnr:.4f}" if psnr is not None else "N/A"
-                )
 
     suite_stats_output = {}
+    all_metric_rows = []
+    total_trials = 0
+    total_successes = 0
+    total_time = 0.0
+    max_time = 0.0
     for suite, stats in suite_stats.items():
-        suite_stats_output[suite] = {
-            'total_tasks': stats['total_tasks'],
-            'total_trials': stats['total_trials'],
-            'total_successes': stats['total_successes'],
-            'total_time': stats['total_time'],
-            'max_time': stats['max_time'],
-        }
-        if has_psnr_metric:
-            suite_stats_output[suite]['average_future_video_psnr'] = (
-                stats['psnr_sum'] / stats['psnr_count'] if stats['psnr_count'] > 0 else None
+        metric_rows = stats.pop("metric_rows")
+        gt_fvd_features = stats.pop("gt_fvd_features")
+        pred_fvd_features = stats.pop("pred_fvd_features")
+        metric_mean = _mean_metrics(metric_rows)
+        suite_gfvd_num_clips = 0
+        if gt_fvd_features:
+            suite_gt = np.concatenate(gt_fvd_features, axis=0)
+            suite_pred = np.concatenate(pred_fvd_features, axis=0)
+            metric_mean["gfvd"] = _frechet_feature_distance(
+                suite_pred, suite_gt
             )
-    
-    # Create and save the task success-rate DataFrame
-    task_success_df = pd.DataFrame(task_success_data)
-    task_success_df.to_csv(os.path.join(output_dir, 'task_success_rates.csv'), index=False)
-    
-    # Save the detailed JSON summary
-    summary_file = os.path.join(output_dir, 'summary.json')
-    overall_stats = {
-        'average_success_rate': total_success_rate/total_suites if total_suites > 0 else 0,
-        'total_time': total_time,
-        'average_task_time': total_time/sum(s['total_tasks'] for s in suite_stats.values()) if suite_stats else 0,
-    }
-    if has_psnr_metric:
-        overall_stats['average_future_video_psnr'] = (
-            overall_psnr_sum / overall_psnr_count if overall_psnr_count > 0 else None
+            suite_gfvd_num_clips = int(suite_gt.shape[0])
+        all_metric_rows.extend(metric_rows)
+        suite_stats_output[suite] = {
+            **stats,
+            "success_rate": (
+                100.0 * stats["total_successes"] / stats["total_trials"]
+                if stats["total_trials"]
+                else 0.0
+            ),
+            "future_video_metrics_mean": metric_mean,
+            "gfvd_num_clips": suite_gfvd_num_clips,
+        }
+        total_trials += stats["total_trials"]
+        total_successes += stats["total_successes"]
+        total_time += stats["total_time"]
+        max_time = max(max_time, stats["max_time"])
+
+    total_tasks = sum(stats["total_tasks"] for stats in suite_stats_output.values())
+    overall_metrics = _mean_metrics(all_metric_rows)
+    overall_gfvd_num_clips = 0
+    if all_gt_fvd_features:
+        overall_gt = np.concatenate(all_gt_fvd_features, axis=0)
+        overall_pred = np.concatenate(all_pred_fvd_features, axis=0)
+        overall_metrics["gfvd"] = _frechet_feature_distance(
+            overall_pred, overall_gt
         )
+        overall_gfvd_num_clips = int(overall_gt.shape[0])
+    overall = {
+        "success_rate": 100.0 * total_successes / total_trials if total_trials else 0.0,
+        "total_trials": total_trials,
+        "total_successes": total_successes,
+        "total_time": total_time,
+        "average_task_time": total_time / total_tasks if total_tasks else 0.0,
+        "max_task_time": max_time,
+        "future_video_metrics_mean": overall_metrics,
+        "gfvd_num_clips": overall_gfvd_num_clips,
+    }
+    metric_protocol = run_metadata.get("metric_protocol")
+    if isinstance(metric_protocol, dict) and isinstance(
+        metric_protocol.get("gfvd"), dict
+    ):
+        metric_protocol["gfvd"]["num_clips"] = overall_gfvd_num_clips
+    summary = {
+        "run_id": output_path.name,
+        **run_metadata,
+        "config": run_metadata.get("resolved_config", os.environ.get("CONFIG", "")),
+        "suite_stats": suite_stats_output,
+        "task_results": task_results,
+        "overall": overall,
+    }
+    with (output_path / "summary.json").open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=4)
 
-    with open(summary_file, 'w') as f:
-        json.dump({
-            'run_id': os.path.basename(output_dir),
-            'ckpt': os.environ.get('CKPT', ''), # Checkpoint path
-            'config': os.environ.get('CONFIG', ''), # Config path
-            'suite_stats': suite_stats_output,
-            'task_results': task_results,
-            'overall': overall_stats
-        }, f, indent=4)
-    
-    print(f"\n=== Run Information ===")
-    print(f"Run ID: {os.path.basename(output_dir)}")
-    print(f"Results directory: {output_dir}")
-    print(f"Summary file: {summary_file}")
-    print(f"Summary CSV: {os.path.join(output_dir, 'summary.csv')}")
-    print(f"Task success rates CSV: {os.path.join(output_dir, 'task_success_rates.csv')}")
-    
-    # Print the task success-rate table
-    print("\n=== Task Success Rates ===")
-    print(task_success_df.to_string(index=False))
+    table_rows = []
+    for suite, stats in suite_stats_output.items():
+        row = {
+            "Task Suite": suite,
+            "Success Rate (%)": stats["success_rate"],
+            "Average Time (s)": stats["total_time"] / stats["total_tasks"],
+            "Max Time (s)": stats["max_time"],
+        }
+        row.update(
+            {f"Future {key}": value for key, value in stats["future_video_metrics_mean"].items()}
+        )
+        table_rows.append(row)
+    if suite_stats_output:
+        overall_row = {
+            "Task Suite": "Overall",
+            "Success Rate (%)": overall["success_rate"],
+            "Average Time (s)": overall["average_task_time"],
+            "Max Time (s)": overall["max_task_time"],
+        }
+        overall_row.update(
+            {f"Future {key}": value for key, value in overall["future_video_metrics_mean"].items()}
+        )
+        table_rows.append(overall_row)
+    table = pd.DataFrame(table_rows)
+    title = Path(str(run_metadata.get("ckpt") or os.environ.get("CKPT", "Results"))).name
+    with (output_path / "summary.csv").open("w", encoding="utf-8") as handle:
+        handle.write(f"{title}\n")
+        table.to_csv(handle, index=False)
 
-    # Print the transposed summary table
-    print("\n=== Results Table ===")
-    print(df.to_string(index=False))
+    task_table = pd.DataFrame(
+        [
+            {
+                "Task": task,
+                "Description": result["task_description"],
+                "Success Rate (%)": result["success_rate"],
+                **{
+                    f"Future {key}": value
+                    for key, value in result["future_video_metrics_mean"].items()
+                },
+            }
+            for task, result in sorted(task_results.items())
+        ]
+    )
+    task_table.to_csv(output_path / "task_success_rates.csv", index=False)
+
+    print("\n=== Evaluation Results Summary ===")
+    print(f"Results directory: {output_path}")
+    print(f"Checkpoint: {run_metadata.get('ckpt', '')}")
+    print(f"Success: {total_successes}/{total_trials} ({overall['success_rate']:.2f}%)")
+    print(f"Total time: {format_time(total_time)}")
+    if overall["future_video_metrics_mean"]:
+        print("Future-video metrics:")
+        for name, value in overall["future_video_metrics_mean"].items():
+            print(f"- {name}: {value:.6f}")
+    print(f"Summary file: {output_path / 'summary.json'}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output_dir', type=str, required=True,
-                      help='Root directory containing evaluation results')
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        required=True,
+        help="Root directory containing evaluation results",
+    )
     args = parser.parse_args()
-    
     summarize_results(args.output_dir)
 
-if __name__ == '__main__':
-    main() 
+
+if __name__ == "__main__":
+    main()

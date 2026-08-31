@@ -10,7 +10,7 @@ action_dit_pretrained_path: checkpoints/ActionDiT_linear_interp_Wan22_alphascale
 skip_dit_load_from_pretrain: false
 # Produced by the task-balanced 100k stride-4 fit. Pixel inference remains
 # VAE-free; the VAE below is instantiated only for the training VR target.
-projection_artifact_path: artifacts/2026-08-04_stride4_bal100k.pt
+projection_artifact_path: auxiliary_weights/projections/2026-08-04_stride4_bal100k.pt
 
 video_dit_config:
   has_image_input: false

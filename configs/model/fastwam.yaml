@@ -9,7 +9,7 @@ mot_checkpoint_mixed_attn: true
 action_dit_pretrained_path: checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt
 skip_dit_load_from_pretrain: false
 # Produced once by tools/fit_asym_fastwam_procrustes.py with ratio=4 sampling.
-projection_artifact_path: artifacts/2026-08-04_stride4_bal100k.pt
+projection_artifact_path: auxiliary_weights/projections/2026-08-04_stride4_bal100k.pt
 
 video_dit_config:
   has_image_input: false
