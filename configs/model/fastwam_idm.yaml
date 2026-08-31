@@ -64,10 +64,10 @@ asymflow:
   enabled: true
   vr_enabled: true
   vae_path: checkpoints/DiffSynth-Studio/Wan-Series-Converted-Safetensors/Wan2.2_VAE.safetensors
-  mse_loss_weight: 10.0
   loss_shift: 0.3
   sigma_min: 5.0e-2
   timestep_shift: 17.0
   lpips_enabled: true
-  lpips_loss_weight: 1.0
+  # Preserve the upstream LPIPS-to-MSE ratio of 0.2 without rescaling action loss.
+  lpips_loss_weight: 0.2
   clamp_denoised: true

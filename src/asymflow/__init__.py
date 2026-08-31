@@ -9,6 +9,7 @@ from .projection import ProjectionArtifact, fit_orthogonal_procrustes
 from .velocity import (
     asymflow_calibration,
     asymflow_velocity,
+    x0_prediction_velocity,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "fit_orthogonal_procrustes",
     "asymflow_calibration",
     "asymflow_velocity",
+    "x0_prediction_velocity",
 ]

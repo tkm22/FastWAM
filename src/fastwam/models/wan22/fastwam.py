@@ -21,6 +21,7 @@ from asymflow.training import (
     sample_logit_normal_sigma,
     wan_future_latent_patches,
 )
+from asymflow.velocity import x0_prediction_velocity
 from fastwam.utils.logging_config import get_logger
 
 from .action_dit import ActionDiT
@@ -134,6 +135,23 @@ class FastWAM(torch.nn.Module):
         self.asymflow = dict(asymflow or {})
         self.asymflow_enabled = bool(self.asymflow.get("enabled", False))
         self.asymflow_vr_enabled = bool(self.asymflow.get("vr_enabled", True))
+        self.video_prediction_type = str(
+            self.asymflow.get("prediction_type", "asym_velocity")
+        )
+        self.x_prediction_eps = float(self.asymflow.get("sigma_min", 5e-2))
+        set_prediction_type = getattr(
+            self.video_expert, "set_prediction_type", None
+        )
+        if callable(set_prediction_type):
+            set_prediction_type(
+                self.video_prediction_type, self.x_prediction_eps
+            )
+            self.video_prediction_type = self.video_expert.prediction_type
+        elif self.video_prediction_type not in {"asym_velocity", "asym_v", "u_a"}:
+            raise TypeError(
+                "The configured video expert does not support selectable pixel "
+                "prediction types"
+            )
         self.load_training_auxiliaries = bool(load_training_auxiliaries)
         if (
             self.asymflow_enabled
@@ -440,12 +458,21 @@ class FastWAM(torch.nn.Module):
         context: torch.Tensor,
         context_mask: torch.Tensor,
         image_is_pad: Optional[torch.Tensor],
+        pred_x0: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """Official AsymFLUX-style VR objective with optional LPIPS correction."""
         sigma = (timestep.float() / float(self.train_video_scheduler.num_train_timesteps))
         sigma_view = sigma.view(-1, 1, 1, 1, 1)
         sigma_clamped = sigma.clamp_min(float(self.asymflow.get("sigma_min", 5e-2)))
-        pred_x0 = noisy_video.float() - sigma_view * pred_velocity.float()
+        if pred_x0 is None:
+            pred_x0 = noisy_video.float() - sigma_view * pred_velocity.float()
+        else:
+            if pred_x0.shape != full_x0.shape:
+                raise ValueError(
+                    "`pred_x0` must match the clean video shape, got "
+                    f"{tuple(pred_x0.shape)} and {tuple(full_x0.shape)}"
+                )
+            pred_x0 = pred_x0.float()
         vr_enabled = bool(self.asymflow.get("vr_enabled", True))
         lpips_enabled = bool(self.asymflow.get("lpips_enabled", True))
         if not vr_enabled:
@@ -483,8 +510,7 @@ class FastWAM(torch.nn.Module):
             squared_error = (squared_error * valid).sum(1) / valid.sum(1).clamp_min(1)
         else:
             squared_error = squared_error.mean(1)
-        mse_weight = float(self.asymflow.get("mse_loss_weight", 10.0))
-        mse_loss = 0.5 * mse_weight * (squared_error / sigma_clamped.square()).mean()
+        mse_loss = (squared_error / sigma_clamped.square()).mean()
 
         lpips_loss = pred_x0.new_zeros(())
         if lpips_enabled:
@@ -516,7 +542,7 @@ class FastWAM(torch.nn.Module):
             # elementwise, then take the ordinary mean.  Dividing by
             # ``weight.sum()`` would cancel the absolute timestep/VR weighting.
             lpips_loss = (spatial_loss * weight).mean()
-            lpips_loss = lpips_loss * float(self.asymflow.get("lpips_loss_weight", 1.0))
+            lpips_loss = lpips_loss * float(self.asymflow.get("lpips_loss_weight", 0.2))
 
         total = mse_loss + lpips_loss
         return total, {
@@ -605,6 +631,7 @@ class FastWAM(torch.nn.Module):
         timestep_video: torch.Tensor,
         target_video: torch.Tensor,
         pred_video: torch.Tensor,
+        pred_x0: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """Apply the shared FastWAM, Joint, or IDM pixel-video objective."""
         if self.asymflow_enabled and self.asymflow_vr_enabled:
@@ -619,10 +646,11 @@ class FastWAM(torch.nn.Module):
                 context=inputs["context"],
                 context_mask=inputs["context_mask"],
                 image_is_pad=inputs["image_is_pad"],
+                pred_x0=pred_x0,
             )
         if self.asymflow_enabled:
-            # Clean no-VR AsymFlow baseline: keep the asymmetric head and the
-            # matched timestep sampler, but use ordinary, unscaled velocity MSE.
+            # Base AsymFlow objective: keep the configured pixel head and
+            # matched timestep sampler with ordinary unscaled velocity MSE.
             loss_video = self._pixel_video_loss(
                 pred_video, target_video, inputs["image_is_pad"]
             ).mean()
@@ -643,16 +671,38 @@ class FastWAM(torch.nn.Module):
         ).mean()
         return loss_video, {}
 
+    def _video_training_target(
+        self,
+        clean_video: torch.Tensor,
+        noise_video: torch.Tensor,
+        noisy_video: torch.Tensor,
+        timestep_video: torch.Tensor,
+    ) -> torch.Tensor:
+        """Build the matched video target for the configured head output."""
+        if self.video_prediction_type == "x0":
+            sigma = timestep_video.float() / float(
+                self.train_video_scheduler.num_train_timesteps
+            )
+            return x0_prediction_velocity(
+                noisy_video,
+                clean_video,
+                sigma,
+                sigma_min=self.x_prediction_eps,
+            )
+        return self.train_video_scheduler.training_target(
+            clean_video, noise_video, timestep_video
+        )
+
     def training_loss(self, sample, tiled: bool = False):
         """Compute weighted joint pixel-video and action flow-matching loss.
 
         The video scheduler noises only ``future_pixels``.  ``first_frame``
         stays clean and enters the video expert as a condition.  The video
-        head predicts an asymmetric velocity internally, but ``post_dit``
-        reconstructs the ordinary full velocity ``epsilon - x0`` before this
-        method compares it with the scheduler target.  Action flow matching,
-        padding masks, scheduler timestep weights, and the two lambda weights
-        retain FastWAM's original objective structure.
+        head predicts either calibrated asymmetric velocity or clean pixels;
+        ``post_dit`` converts both to ordinary full velocity ``epsilon-x0``
+        before this method compares it with the scheduler target. Action flow
+        matching, padding masks, scheduler timestep weights, and the two lambda
+        weights retain FastWAM's original objective structure.
         """
         inputs = self.build_inputs(sample, tiled)
         batch_size = inputs["future_pixels"].shape[0]
@@ -664,8 +714,11 @@ class FastWAM(torch.nn.Module):
         noisy_video = self.train_video_scheduler.add_noise(
             inputs["future_pixels"], noise_video, timestep_video
         )
-        target_video = self.train_video_scheduler.training_target(
-            inputs["future_pixels"], noise_video, timestep_video
+        target_video = self._video_training_target(
+            inputs["future_pixels"],
+            noise_video,
+            noisy_video,
+            timestep_video,
         )
 
         timestep_action = self.train_action_scheduler.sample_training_t(
@@ -724,7 +777,17 @@ class FastWAM(torch.nn.Module):
                 "action": action_pre["t_mod"],
             },
         )
-        pred_video = self.video_expert.post_dit(tokens_out["video"], video_pre)
+        pred_x0 = None
+        if self.video_prediction_type == "x0":
+            pred_video, pred_x0 = self.video_expert.post_dit(
+                tokens_out["video"],
+                video_pre,
+                return_raw_prediction=True,
+            )
+        else:
+            pred_video = self.video_expert.post_dit(
+                tokens_out["video"], video_pre
+            )
         pred_action = self.action_expert.post_dit(tokens_out["action"], action_pre)
 
         loss_video, video_logs = self._video_training_loss(
@@ -734,6 +797,7 @@ class FastWAM(torch.nn.Module):
             timestep_video=timestep_video,
             target_video=target_video,
             pred_video=pred_video,
+            pred_x0=pred_x0,
         )
         loss_action = F.mse_loss(
             pred_action.float(), target_action.float(), reduction="none"
