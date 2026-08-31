@@ -356,6 +356,25 @@ def _compute_clip_mean_psnr(
     return float(np.mean(frame_psnr_values))
 
 
+def _inference_provenance(cfg: DictConfig) -> dict[str, Any]:
+    return {
+        "schedule": str(
+            cfg.EVALUATION.get("inference_schedule", "logit_normal")
+        ),
+        "schedule_shift": (
+            None
+            if cfg.EVALUATION.get("inference_schedule_shift", 17.0) is None
+            else float(cfg.EVALUATION.get("inference_schedule_shift", 17.0))
+        ),
+        "sigma_shift": (
+            None
+            if cfg.EVALUATION.get("sigma_shift") is None
+            else float(cfg.EVALUATION.get("sigma_shift"))
+        ),
+        "num_steps": int(cfg.EVALUATION.get("num_inference_steps")),
+    }
+
+
 def _predict_action_chunk(
     obs: dict,
     task_description: str,
@@ -398,6 +417,14 @@ def _predict_action_chunk(
             None
             if cfg.EVALUATION.get("sigma_shift") is None
             else float(cfg.EVALUATION.get("sigma_shift"))
+        ),
+        "inference_schedule": str(
+            cfg.EVALUATION.get("inference_schedule", "logit_normal")
+        ),
+        "inference_schedule_shift": (
+            None
+            if cfg.EVALUATION.get("inference_schedule_shift", 17.0) is None
+            else float(cfg.EVALUATION.get("inference_schedule_shift", 17.0))
         ),
         "seed": None if cfg.get("seed") is None else int(cfg.seed),
         "rand_device": str(cfg.EVALUATION.get("rand_device", "cpu")),

@@ -31,6 +31,10 @@ EVALUATION:
   action_horizon: null
   num_inference_steps: ${eval_num_inference_steps}
   sigma_shift: null
+  # Pixel-model video metrics consistently favored logit-normal nodes over
+  # uniform nodes with Euler; shift 17 matches the training-time sampler.
+  inference_schedule: logit_normal
+  inference_schedule_shift: 17.0
   text_cfg_scale: 1.0
   negative_prompt: ""
   rand_device: cpu

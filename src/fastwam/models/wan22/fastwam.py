@@ -1048,6 +1048,8 @@ class FastWAM(torch.nn.Module):
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
         sigma_shift: Optional[float] = None,
+        inference_schedule: str = "logit_normal",
+        inference_schedule_shift: Optional[float] = 17.0,
         seed: Optional[int] = None,
         rand_device: str = "cpu",
         tiled: bool = False,
@@ -1107,7 +1109,12 @@ class FastWAM(torch.nn.Module):
         ).to(self.device, self.torch_dtype)
         timesteps_video, deltas_video = (
             self.infer_video_scheduler.build_inference_schedule(
-                num_inference_steps, self.device, future.dtype, sigma_shift
+                num_inference_steps,
+                self.device,
+                future.dtype,
+                sigma_shift,
+                inference_schedule,
+                inference_schedule_shift,
             )
         )
         timesteps_action, deltas_action = (
@@ -1116,6 +1123,8 @@ class FastWAM(torch.nn.Module):
                 self.device,
                 action_state.dtype,
                 sigma_shift,
+                inference_schedule,
+                inference_schedule_shift,
             )
         )
         for tv, dv, ta, da in zip(
@@ -1188,6 +1197,8 @@ class FastWAM(torch.nn.Module):
         text_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
         sigma_shift: Optional[float] = None,
+        inference_schedule: str = "logit_normal",
+        inference_schedule_shift: Optional[float] = 17.0,
         seed: Optional[int] = None,
         rand_device: str = "cpu",
         tiled: bool = False,
@@ -1252,7 +1263,12 @@ class FastWAM(torch.nn.Module):
         )
         timesteps, deltas = (
             self.infer_action_scheduler.build_inference_schedule(
-                num_inference_steps, self.device, latents_action.dtype, sigma_shift
+                num_inference_steps,
+                self.device,
+                latents_action.dtype,
+                sigma_shift,
+                inference_schedule,
+                inference_schedule_shift,
             )
         )
         for timestep, delta in zip(timesteps, deltas):
@@ -1288,6 +1304,8 @@ class FastWAM(torch.nn.Module):
         action_cfg_scale: float = 1.0,
         num_inference_steps: int = 20,
         sigma_shift: Optional[float] = None,
+        inference_schedule: str = "logit_normal",
+        inference_schedule_shift: Optional[float] = 17.0,
         seed: Optional[int] = None,
         rand_device: str = "cpu",
         tiled: bool = False,
@@ -1314,6 +1332,8 @@ class FastWAM(torch.nn.Module):
             text_cfg_scale=text_cfg_scale,
             num_inference_steps=num_inference_steps,
             sigma_shift=sigma_shift,
+            inference_schedule=inference_schedule,
+            inference_schedule_shift=inference_schedule_shift,
             seed=seed,
             rand_device=rand_device,
             tiled=tiled,
