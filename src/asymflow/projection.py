@@ -47,6 +47,12 @@ def validate_projection_artifact(
     require_task_balanced_100k: bool = False,
 ) -> None:
     """Fail closed when a pixel model is paired with an incompatible A fit."""
+    pixel_space = str(artifact.metadata.get("pixel_space", "oklab")).lower()
+    if pixel_space not in {"oklab", "rgb"}:
+        raise ValueError(
+            "artifact metadata pixel_space must be 'oklab' or 'rgb', got "
+            f"{pixel_space!r}"
+        )
     expected = {"A_first": (3072, 192), "A_future": (12288, 192)}
     for name, shape in expected.items():
         value = getattr(artifact, name)
@@ -68,6 +74,14 @@ def validate_projection_artifact(
             raise ValueError(f"{name} must contain three finite channel values")
     if not bool((torch.as_tensor(artifact.oklab_std) > 0).all()):
         raise ValueError("oklab_std must be positive")
+    if pixel_space == "rgb":
+        # The field names are retained for compatibility with existing Oklab
+        # artifacts.  RGB artifacts use identity statistics because direct
+        # normalized sRGB [-1,1] is the experimental representation.
+        if not torch.equal(torch.as_tensor(artifact.oklab_mean), torch.zeros(3)):
+            raise ValueError("direct RGB artifacts must store zero pixel mean")
+        if not torch.equal(torch.as_tensor(artifact.oklab_std), torch.ones(3)):
+            raise ValueError("direct RGB artifacts must store unit pixel std")
     if require_task_balanced_100k:
         metadata = artifact.metadata
         if metadata.get("clips_per_task") != 2500 or metadata.get("total_clips") != 100000:

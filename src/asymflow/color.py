@@ -16,6 +16,34 @@ DEFAULT_LIBERO_OKLAB_MEAN = (0.5660378933, 0.0081772227, 0.0162523333)
 DEFAULT_LIBERO_OKLAB_STD = (0.2106077075, 0.0115914568, 0.0160523932)
 
 
+class RGBColorEncoder(nn.Module):
+    """Identity mapping for normalized sRGB tensors in ``[-1, 1]``.
+
+    The dataset already provides normalized sRGB.  Keeping this as an explicit
+    module lets the pixel model use the same encode/decode interface as the
+    Oklab path without applying a colour transform or an additional affine
+    normalization.
+    """
+
+    @staticmethod
+    def _validate(x: torch.Tensor) -> None:
+        if x.ndim < 2 or x.shape[1] != 3:
+            raise ValueError(
+                "RGB tensors must use channel dimension 1 with size 3, got "
+                f"{tuple(x.shape)}"
+            )
+
+    def encode(self, rgb_minus_one_to_one: torch.Tensor) -> torch.Tensor:
+        self._validate(rgb_minus_one_to_one)
+        return rgb_minus_one_to_one
+
+    def decode(self, rgb_minus_one_to_one: torch.Tensor) -> torch.Tensor:
+        self._validate(rgb_minus_one_to_one)
+        return rgb_minus_one_to_one
+
+    forward = encode
+
+
 class OklabColorEncoder(nn.Module):
     """Map normalized sRGB ``[-1, 1]`` tensors to standardized Oklab.
 

@@ -26,7 +26,7 @@ import torch.distributed as dist
 import torchvision.transforms.functional as transforms_F
 from tqdm import tqdm
 
-from asymflow.color import OklabColorEncoder
+from asymflow.color import OklabColorEncoder, RGBColorEncoder
 from asymflow.projection import (
     ProjectionArtifact,
     fit_orthogonal_procrustes,
@@ -230,27 +230,39 @@ def _fit(args, rank: int, world_size: int):
             f"{total_clips} full-horizon clips, {len(grouped)} episodes"
         )
 
-    raw_color = OklabColorEncoder(mean=(0, 0, 0), std=(1, 1, 1)).to(args.device)
-    stats_sum = torch.zeros(3, dtype=torch.float64, device=args.device)
-    stats_sq = torch.zeros(3, dtype=torch.float64, device=args.device)
-    stats_n = torch.zeros((), dtype=torch.float64, device=args.device)
-    readers = {}
-    for root, episode_index, length, starts in tqdm(
-        local_groups, desc=f"rank {rank} Oklab stats", disable=rank != 0
-    ):
-        reader = readers.setdefault(root, EpisodeReader(root))
-        video = reader.read(episode_index, length)
-        for rgb in _clips(video, starts, args.vae_batch):
-            lab = raw_color.encode(rgb.to(args.device, torch.float32)).double()
-            stats_sum += lab.sum((0, 2, 3, 4))
-            stats_sq += lab.square().sum((0, 2, 3, 4))
-            stats_n += lab.numel() // 3
-    _all_reduce_sum(stats_sum, world_size)
-    _all_reduce_sum(stats_sq, world_size)
-    _all_reduce_sum(stats_n, world_size)
-    mean = stats_sum / stats_n
-    std = (stats_sq / stats_n - mean.square()).clamp_min(1e-12).sqrt()
-    color = OklabColorEncoder(mean=mean.tolist(), std=std.tolist()).to(args.device)
+    if args.pixel_space == "oklab":
+        raw_color = OklabColorEncoder(
+            mean=(0, 0, 0), std=(1, 1, 1)
+        ).to(args.device)
+        stats_sum = torch.zeros(3, dtype=torch.float64, device=args.device)
+        stats_sq = torch.zeros(3, dtype=torch.float64, device=args.device)
+        stats_n = torch.zeros((), dtype=torch.float64, device=args.device)
+        readers = {}
+        for root, episode_index, length, starts in tqdm(
+            local_groups, desc=f"rank {rank} Oklab stats", disable=rank != 0
+        ):
+            reader = readers.setdefault(root, EpisodeReader(root))
+            video = reader.read(episode_index, length)
+            for rgb in _clips(video, starts, args.vae_batch):
+                lab = raw_color.encode(rgb.to(args.device, torch.float32)).double()
+                stats_sum += lab.sum((0, 2, 3, 4))
+                stats_sq += lab.square().sum((0, 2, 3, 4))
+                stats_n += lab.numel() // 3
+        _all_reduce_sum(stats_sum, world_size)
+        _all_reduce_sum(stats_sq, world_size)
+        _all_reduce_sum(stats_n, world_size)
+        mean = stats_sum / stats_n
+        std = (stats_sq / stats_n - mean.square()).clamp_min(1e-12).sqrt()
+        color = OklabColorEncoder(
+            mean=mean.tolist(), std=std.tolist()
+        ).to(args.device)
+    else:
+        # RobotVideoDataset already emits normalized sRGB [-1,1].  The RGB
+        # ablation uses it directly, with neither Oklab conversion nor an
+        # additional dataset-affine normalization.
+        mean = torch.zeros(3, dtype=torch.float32, device=args.device)
+        std = torch.ones(3, dtype=torch.float32, device=args.device)
+        color = RGBColorEncoder().to(args.device)
 
     vae = _load_vae(args.vae_path, args.device, args.dtype)
     first_cross = torch.zeros((FIRST_DIM, LATENT_DIM), dtype=torch.float64, device=args.device)
@@ -317,8 +329,7 @@ def _fit(args, rank: int, world_size: int):
             "task_clip_counts": task_counts,
             "selection_sha256": selection_hash,
             "selected_episodes": len(grouped),
-            "pixel_space": "oklab",
-            "oklab_dtype": "float32",
+            "pixel_space": args.pixel_space,
             "vae_dtype": str(args.dtype).removeprefix("torch."),
             "cross_gram_and_svd_dtype": "float64",
             "pixel_patch_size": 32,
@@ -327,6 +338,11 @@ def _fit(args, rank: int, world_size: int):
             "future_pixel_dim": FUTURE_DIM,
             "source_latent_token_dim": LATENT_DIM,
         }
+        if args.pixel_space == "oklab":
+            metadata["oklab_dtype"] = "float32"
+        else:
+            metadata["rgb_range"] = "[-1,1]"
+            metadata["rgb_normalization"] = "identity"
         if args.clips_per_task is not None:
             metadata["clips_per_task"] = args.clips_per_task
             metadata["selection_seed"] = args.seed
@@ -373,6 +389,15 @@ def main():
         ),
     )
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument(
+        "--pixel-space",
+        choices=("oklab", "rgb"),
+        default="oklab",
+        help=(
+            "Pixel representation fitted against Wan latents. 'rgb' uses "
+            "RobotVideoDataset's normalized sRGB [-1,1] directly."
+        ),
+    )
     p.add_argument("--vae-batch", type=int, default=8)
     p.add_argument("--device", default="cuda")
     p.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")

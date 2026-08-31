@@ -4,7 +4,7 @@ This package intentionally does not import FastWAM or Wan.  It can therefore be
 used by the offline projection fitting job as well as by the training runtime.
 """
 
-from .color import OklabColorEncoder
+from .color import OklabColorEncoder, RGBColorEncoder
 from .projection import ProjectionArtifact, fit_orthogonal_procrustes
 from .velocity import (
     asymflow_calibration,
@@ -14,6 +14,7 @@ from .velocity import (
 
 __all__ = [
     "OklabColorEncoder",
+    "RGBColorEncoder",
     "ProjectionArtifact",
     "fit_orthogonal_procrustes",
     "asymflow_calibration",

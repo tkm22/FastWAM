@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 
-from asymflow.color import OklabColorEncoder
+from asymflow.color import OklabColorEncoder, RGBColorEncoder
 from asymflow.projection import (
     ProjectionArtifact,
     validate_projection_artifact,
@@ -135,6 +135,22 @@ class FastWAM(torch.nn.Module):
         self.asymflow = dict(asymflow or {})
         self.asymflow_enabled = bool(self.asymflow.get("enabled", False))
         self.asymflow_vr_enabled = bool(self.asymflow.get("vr_enabled", True))
+        self.pixel_space = str(
+            self.asymflow.get("color_space", "oklab")
+        ).strip().lower()
+        if self.pixel_space not in {"oklab", "rgb"}:
+            raise ValueError(
+                "asymflow.color_space must be 'oklab' or 'rgb', got "
+                f"{self.pixel_space!r}"
+            )
+        artifact_pixel_space = str(
+            artifact.metadata.get("pixel_space", "oklab")
+        ).strip().lower()
+        if artifact_pixel_space != self.pixel_space:
+            raise ValueError(
+                "Projection artifact pixel space does not match the model: "
+                f"artifact={artifact_pixel_space!r}, model={self.pixel_space!r}"
+            )
         self.video_prediction_type = str(
             self.asymflow.get("prediction_type", "asym_velocity")
         )
@@ -159,14 +175,16 @@ class FastWAM(torch.nn.Module):
             and not self.asymflow_vr_enabled
         ):
             raise ValueError("AsymFlow LPIPS requires vr_enabled=true for its patch-wise gate")
-        self.color = OklabColorEncoder(
-            mean=artifact.oklab_mean.flatten().tolist(),
-            std=artifact.oklab_std.flatten().tolist(),
-        )
+        if self.pixel_space == "rgb":
+            self.color = RGBColorEncoder()
+        else:
+            self.color = OklabColorEncoder(
+                mean=artifact.oklab_mean.flatten().tolist(),
+                std=artifact.oklab_std.flatten().tolist(),
+            )
         self.to(device=self.device, dtype=self.torch_dtype)
-        # Match the upstream AsymFlow color encoder: color conversion and
-        # affine normalization stay in float32, then pixel states enter the
-        # Transformer in its configured dtype.
+        # Oklab conversion stays in float32.  RGB is an identity operation, so
+        # this call only keeps the two colour paths on the same module API.
         self.color.float()
 
         # These helpers deliberately bypass nn.Module registration.  They are

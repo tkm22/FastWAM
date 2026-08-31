@@ -62,6 +62,7 @@ loss:
 
 asymflow:
   enabled: true
+  color_space: oklab
   vr_enabled: true
   vae_path: checkpoints/DiffSynth-Studio/Wan-Series-Converted-Safetensors/Wan2.2_VAE.safetensors
   loss_shift: 0.3

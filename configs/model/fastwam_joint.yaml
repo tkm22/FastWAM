@@ -63,6 +63,7 @@ loss:
 
 asymflow:
   enabled: true
+  color_space: oklab
   # `x0` retains this pixel input/timestep path but directly predicts clean
   # pixels; post_dit converts it to velocity for the shared scheduler.
   prediction_type: asym_velocity
